@@ -42,6 +42,16 @@ ws://host:8000/ws?user_id=<uid>&device_token=<fcm_token>
 }
 ```
 
+#### QUEUE_SIZE_UPDATED — 같은 지역 대기 인원 변경 (실시간)
+```json
+{
+  "type": "QUEUE_SIZE_UPDATED",
+  "location": "강남구_역삼동",
+  "queue_size": 3,
+  "needed": 1
+}
+```
+
 #### MATCHED — 4명 매칭 완료 (WS 연결 중인 경우 즉시 수신)
 ```json
 {
@@ -105,9 +115,22 @@ ws://host:8000/ws?user_id=<uid>&device_token=<fcm_token>
 {
   "type": "ROOM_JOINED",
   "room_id": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "MATCHED_WAITING_FOR_CONNECTIONS",
+  "status": "MATCHED_WAITING_FOR_CONNECTIONS | ACTIVE | TIMEBOMB",
+  "all_users": ["user_a", "user_b", "user_c", "user_d"],
   "connected_users": ["user_a", "user_b"],
-  "total_users": 4
+  "total_users": 4,
+  "timebomb_remaining_seconds": 240
+}
+```
+- `all_users`: 방의 4명 전체 목록 (순서 고정, 색상 지정 기준)
+- `timebomb_remaining_seconds`: `status == "TIMEBOMB"` 일 때만 포함
+
+#### USER_CONNECTED — 대기 중 다른 유저 입장 알림
+```json
+{
+  "type": "USER_CONNECTED",
+  "user_id": "user_c",
+  "connected_users": ["user_a", "user_b", "user_c"]
 }
 ```
 
@@ -288,14 +311,18 @@ ws://host:8000/ws?user_id=<uid>&device_token=<fcm_token>
 | `LEAVE` | C→S | 명시적 퇴장 |
 | `PING` | C→S | 연결 유지 |
 | `QUEUE_JOINED` | S→C | 큐 등록 확인 |
+| `QUEUE_SIZE_UPDATED` | S→C | 대기 인원 변경 (실시간) |
 | `QUEUE_CANCELLED` | S→C | 큐 취소 확인 |
 | `QUEUE_EXPIRED` | S→C | 큐 만료 (1시간) |
 | `MATCHED` | S→C | 4인 매칭 완료 |
-| `ROOM_JOINED` | S→C | 룸 입장 확인 |
+| `ROOM_JOINED` | S→C | 룸 입장 확인 (all_users, timebomb_remaining 포함) |
 | `ROOM_ACTIVE` | S→C | 전원 입장, 채팅 시작 |
+| `USER_CONNECTED` | S→C | 대기 중 유저 입장 알림 |
 | `MATCH_FAILED` | S→C | 60초 타임아웃 |
 | `TIMEBOMB_TRIGGERED` | S→C | 5분 카운트다운 시작 |
 | `TIMEBOMB_CANCELLED` | S→C | 카운트다운 해제 |
 | `ROOM_DESTROYED` | S→C | 방 폭파 |
-| `PONG` | S→C | 연결 유지 응답 |
-| `ERROR` | S→C | 오류 |
+| `PING` | S→C | 서버 keepalive ping (30초 주기) |
+| `PONG` | S→C | 클라이언트 ping 응답 |
+| `SESSION_REPLACED` | S→C | 동일 user_id 새 연결로 교체됨 |
+| `ERROR` | S→C | 오류 (code: MESSAGE_TOO_LARGE, CONTENT_TOO_LONG 등) |

@@ -8,6 +8,7 @@ WebSocket 연결:
   ws://host:8000/ws?user_id=<uid>&device_token=<fcm_token>
 """
 
+import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
@@ -28,6 +29,14 @@ logger = logging.getLogger(__name__)
 
 room_manager = RoomManager()
 matchmaker = MatchMaker(room_manager)
+
+# 메시지 크기 한계 (bytes)
+MAX_MESSAGE_BYTES = 64_000   # 64KB — SIGNAL/SDP 최대 크기
+MAX_CHAT_LENGTH = 1_000      # 채팅 텍스트 최대 길이 (문자)
+
+# 서버→클라이언트 ping 주기/타임아웃
+SERVER_PING_INTERVAL = 30    # 초마다 ping 발송
+SERVER_PING_TIMEOUT = 15     # ping 후 N초 안에 응답 없으면 연결 종료
 
 
 @asynccontextmanager
@@ -75,6 +84,47 @@ async def stats():
     }
 
 
+# ─── WS 세션 레지스트리 (user_id → ws, 중복 연결 처리용) ─────────────────────
+
+_active_sessions: dict[str, WebSocket] = {}
+
+
+async def _close_previous_session(user_id: str, new_ws: WebSocket) -> None:
+    """같은 user_id로 새 연결이 들어오면 이전 WS를 강제 종료."""
+    old_ws = _active_sessions.get(user_id)
+    if old_ws and old_ws is not new_ws:
+        try:
+            await old_ws.send_json({"type": "SESSION_REPLACED"})
+            await old_ws.close(code=4001)
+        except Exception:
+            pass
+        logger.info(f"[WS 세션 교체] user={user_id} 이전 연결 종료")
+    _active_sessions[user_id] = new_ws
+
+
+# ─── 서버 사이드 ping (죽은 연결 감지) ───────────────────────────────────────
+
+async def _keepalive_loop(user_id: str, ws: WebSocket, stop: asyncio.Event) -> None:
+    """주기적으로 서버 ping을 보내고 타임아웃 시 연결 종료."""
+    while not stop.is_set():
+        await asyncio.sleep(SERVER_PING_INTERVAL)
+        if stop.is_set():
+            break
+        try:
+            await asyncio.wait_for(ws.send_json({"type": "PING"}), timeout=5)
+        except Exception:
+            logger.info(f"[Keepalive] user={user_id} ping 실패 → 연결 종료")
+            try:
+                await ws.close(code=1001)
+            except Exception:
+                pass
+            stop.set()
+            return
+
+        # 타임아웃 대기 (클라이언트가 PONG 보내지 않아도 허용 — 연결 유지만 확인)
+        await asyncio.sleep(SERVER_PING_TIMEOUT)
+
+
 # ─── WebSocket Endpoint ───────────────────────────────────────────────────────
 
 @app.websocket("/ws")
@@ -86,9 +136,15 @@ async def websocket_endpoint(
     await ws.accept()
     logger.info(f"[WS 연결] user={user_id}")
 
+    # 이전 세션 정리
+    await _close_previous_session(user_id, ws)
+
+    stop_keepalive = asyncio.Event()
+    keepalive_task = asyncio.create_task(_keepalive_loop(user_id, ws, stop_keepalive))
+
     current_room_id: Optional[str] = None
 
-    # 재접속 처리: 이미 룸에 소속된 경우 자동 복귀
+    # 재접속: 이미 룸에 소속된 경우 자동 복귀
     existing_room_id = room_manager.get_user_room(user_id)
     if existing_room_id:
         success = await room_manager.join_room(existing_room_id, user_id, ws)
@@ -96,12 +152,17 @@ async def websocket_endpoint(
             current_room_id = existing_room_id
             logger.info(f"[WS 재접속] user={user_id} → room={existing_room_id}")
     else:
-        # 큐에 대기 중이었다면 WS 핸들 갱신 (백그라운드 → 포그라운드)
         matchmaker.update_ws(user_id, ws)
 
     try:
         while True:
             raw = await ws.receive_text()
+
+            # 메시지 크기 검사
+            if len(raw.encode()) > MAX_MESSAGE_BYTES:
+                await ws.send_json({"type": "ERROR", "code": "MESSAGE_TOO_LARGE"})
+                continue
+
             try:
                 data = json.loads(raw)
             except json.JSONDecodeError:
@@ -127,7 +188,7 @@ async def websocket_endpoint(
                 removed = await matchmaker.cancel_queue(user_id)
                 await ws.send_json({"type": "QUEUE_CANCELLED", "success": removed})
 
-            # ── 방 입장 (푸시 받고 복귀) ──────────────────────────────────────
+            # ── 방 입장 (푸시 받고 복귀) ─────────────────────────────────────
             elif msg_type == "JOIN_ROOM":
                 room_id = data.get("room_id", "")
                 if not room_id:
@@ -142,8 +203,11 @@ async def websocket_endpoint(
                 if not current_room_id:
                     await ws.send_json({"type": "ERROR", "code": "NOT_IN_ROOM"})
                     continue
-                content = data.get("content", "")
+                content = (data.get("content") or "").strip()
                 if not content:
+                    continue
+                if len(content) > MAX_CHAT_LENGTH:
+                    await ws.send_json({"type": "ERROR", "code": "CONTENT_TOO_LONG"})
                     continue
                 await room_manager.relay_message(
                     current_room_id,
@@ -161,7 +225,7 @@ async def websocket_endpoint(
                     user_id,
                     {
                         "type": "SIGNAL",
-                        "signal_type": data.get("signal_type"),   # offer | answer | candidate
+                        "signal_type": data.get("signal_type"),
                         "target_user_id": data.get("target_user_id"),
                         "payload": data.get("payload"),
                     },
@@ -185,9 +249,10 @@ async def websocket_endpoint(
     except Exception as e:
         logger.error(f"[WS 오류] user={user_id}: {e}", exc_info=True)
     finally:
-        # 큐 대기 중: WS를 None으로 → 큐에서 제거하지 않음 (핵심 동작)
+        stop_keepalive.set()
+        keepalive_task.cancel()
+        _active_sessions.pop(user_id, None)
         matchmaker.update_ws(user_id, None)
-        # 룸 활성 중: 재접속 유예 타이머 시작
         if current_room_id:
             await room_manager.handle_disconnect(current_room_id, user_id)
 

@@ -8,6 +8,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
+import * as MediaLibrary from 'expo-media-library';
 import { useStore } from '../store/useStore';
 import { wsClient } from '../lib/websocket';
 import { webrtcManager } from '../lib/webrtc';
@@ -45,6 +46,7 @@ export default function ChatScreen() {
   } = useStore();
 
   const [input, setInput] = useState('');
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
   const listRef = useRef<FlatList>(null);
 
   useEffect(() => {
@@ -127,6 +129,20 @@ export default function ChatScreen() {
     ]);
   }, [sendImage]);
 
+  const saveImage = useCallback(async (uri: string) => {
+    const { status } = await MediaLibrary.requestPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('권한 필요', '사진 저장을 위해 미디어 접근 권한이 필요합니다.');
+      return;
+    }
+    try {
+      await MediaLibrary.saveToLibraryAsync(uri);
+      Alert.alert('저장 완료', '사진이 갤러리에 저장되었습니다.');
+    } catch {
+      Alert.alert('저장 실패', '사진 저장 중 오류가 발생했습니다.');
+    }
+  }, []);
+
   function handleLeave() {
     Alert.alert(
       '나가기',
@@ -188,6 +204,15 @@ export default function ChatScreen() {
         </View>
       )}
 
+      {showScrollBtn && (
+        <TouchableOpacity
+          style={styles.scrollBtn}
+          onPress={() => listRef.current?.scrollToEnd({ animated: true })}
+        >
+          <Text style={styles.scrollBtnText}>↓</Text>
+        </TouchableOpacity>
+      )}
+
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -198,6 +223,12 @@ export default function ChatScreen() {
           data={messages}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.messageList}
+          onScroll={(e) => {
+            const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+            const distFromBottom = contentSize.height - contentOffset.y - layoutMeasurement.height;
+            setShowScrollBtn(distFromBottom > 120);
+          }}
+          scrollEventThrottle={200}
           renderItem={({ item }) => {
             const senderIdx = allUsers.indexOf(item.senderId);
             const senderColor = getColor(item.senderId);
@@ -216,11 +247,16 @@ export default function ChatScreen() {
                   !item.isMine && { borderLeftColor: senderColor, borderLeftWidth: 3 },
                 ]}>
                   {item.contentType === 'image' ? (
-                    <Image
-                      source={{ uri: item.content }}
-                      style={styles.bubbleImage}
-                      resizeMode="contain"
-                    />
+                    <TouchableOpacity
+                      onLongPress={() => saveImage(item.content)}
+                      activeOpacity={0.85}
+                    >
+                      <Image
+                        source={{ uri: item.content }}
+                        style={styles.bubbleImage}
+                        resizeMode="contain"
+                      />
+                    </TouchableOpacity>
                   ) : (
                     <Text style={styles.bubbleText}>{item.content}</Text>
                   )}
@@ -342,4 +378,13 @@ const styles = StyleSheet.create({
   },
   sendBtnDisabled: { backgroundColor: '#1F2937' },
   sendBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+
+  scrollBtn: {
+    position: 'absolute', bottom: 80, right: 16, zIndex: 10,
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: '#4C1D95', alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 4, shadowOffset: { width: 0, height: 2 },
+    elevation: 6,
+  },
+  scrollBtnText: { color: '#fff', fontSize: 18, lineHeight: 22 },
 });

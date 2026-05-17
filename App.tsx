@@ -148,6 +148,11 @@ export default function App() {
         break;
       }
 
+      case 'SESSION_REPLACED':
+        // 같은 user_id로 새 연결이 들어와 이 세션이 종료됨 — 자동 재연결 방지
+        wsClient.disconnect();
+        break;
+
       case 'MATCH_FAILED':
         resetRoom();
         webrtcManager.cleanup();

@@ -18,6 +18,7 @@
     "expo-image-picker": "^55.0.20",
     "expo-linking": "^55.0.15",
     "expo-location": "~19.0.8",
+    "expo-media-library": "^55.0.17",
     "expo-notifications": "~0.32.17",
     "expo-status-bar": "~3.0.9",
     "react": "19.1.0",

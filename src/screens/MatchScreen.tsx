@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Animated, StyleSheet, Text, TouchableOpacity, View,
+  Alert, Animated, Linking, StyleSheet, Text, TouchableOpacity, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -59,7 +59,18 @@ export default function MatchScreen() {
     setLocLoading(true);
     try {
       const info = await requestLocationAndGetDistrict();
-      if (info) setLocation(info.key, info.display);
+      if (info) {
+        setLocation(info.key, info.display);
+      } else {
+        Alert.alert(
+          '위치 권한 필요',
+          '매칭을 위해 위치 접근 권한이 필요합니다.\n설정에서 위치 권한을 허용해주세요.',
+          [
+            { text: '취소', style: 'cancel' },
+            { text: '설정 열기', onPress: () => Linking.openSettings() },
+          ]
+        );
+      }
     } finally {
       setLocLoading(false);
     }

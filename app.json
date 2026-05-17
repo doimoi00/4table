@@ -63,6 +63,14 @@
         {
           "cameraPermission": "사진/영상을 P2P로 공유하기 위해 카메라 접근이 필요합니다."
         }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "받은 사진을 갤러리에 저장하기 위해 미디어 접근이 필요합니다.",
+          "savePhotosPermission": "받은 사진을 저장하기 위해 미디어 접근이 필요합니다.",
+          "isAccessMediaLocationEnabled": true
+        }
       ]
     ]
   }
