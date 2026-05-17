@@ -1,0 +1,69 @@
+{
+  "expo": {
+    "name": "4table",
+    "slug": "4table",
+    "scheme": "4table",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A0E1A"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.doimoi.fourtable",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "근처 동네 사람들과 매칭하기 위해 위치 정보가 필요합니다.",
+        "NSCameraUsageDescription": "사진과 영상을 P2P로 전송하기 위해 카메라 접근이 필요합니다.",
+        "NSMicrophoneUsageDescription": "음성 메시지를 위해 마이크 접근이 필요합니다."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0A0E1A"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "package": "com.doimoi.fourtable",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "CAMERA",
+        "RECORD_AUDIO",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "INTERNET"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "근처 동네 사람들과 매칭하기 위해 위치 정보가 필요합니다."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#7C3AED",
+          "sounds": []
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "사진/영상을 P2P로 공유하기 위해 카메라 접근이 필요합니다."
+        }
+      ]
+    ]
+  }
+}
