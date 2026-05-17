@@ -89,13 +89,13 @@ export default function App() {
     if (history.length > 0) {
       setMessages(
         history.map((m) => ({
-          id: `hist-${m.sender_id}-${m.timestamp}`,
+          id: (m.msg_id as string) ?? `hist-${m.sender_id}-${m.timestamp}`,
           senderId: m.sender_id as string,
           content: m.content as string,
           contentType: 'text' as const,
           timestamp: (m.timestamp as string) ?? new Date().toISOString(),
           isMine: (m.sender_id as string) === myId,
-          reactions: {},
+          reactions: (m.reactions as Record<string, string[]>) ?? {},
         }))
       );
     }

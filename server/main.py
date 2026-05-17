@@ -212,7 +212,12 @@ async def websocket_endpoint(
                 ok = await room_manager.relay_message(
                     current_room_id,
                     user_id,
-                    {"type": "CHAT", "content": content, "timestamp": data.get("timestamp")},
+                    {
+                        "type": "CHAT",
+                        "content": content,
+                        "timestamp": data.get("timestamp"),
+                        "msg_id": (data.get("msg_id") or "").strip(),
+                    },
                 )
                 if not ok:
                     await ws.send_json({"type": "ERROR", "code": "RATE_LIMITED"})

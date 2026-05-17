@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Alert, FlatList, Image, KeyboardAvoidingView, Modal, Platform,
+  Alert, Animated, FlatList, Image, KeyboardAvoidingView, Modal, Platform,
   StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -23,8 +23,12 @@ type Nav = NativeStackNavigationProp<RootStackParamList, 'Chat'>;
 type Route = RouteProp<RootStackParamList, 'Chat'>;
 
 const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '😡'] as const;
-const TYPING_STOP_DELAY = 2500;   // ms
-const TYPING_THROTTLE_MS = 1000;  // TYPING=true 최소 전송 간격
+const TYPING_STOP_DELAY = 2500;
+const TYPING_THROTTLE_MS = 1000;
+
+function genMsgId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
 
 function UserDot({ userId, users, connectedUsers }: {
   userId: string; users: string[]; connectedUsers: string[];
@@ -59,6 +63,33 @@ export default function ChatScreen() {
   const lastTypingTrueAt = useRef<number>(0);
   const prevMsgCount = useRef(0);
 
+  const typingLabels = typingUsers
+    .filter((uid) => uid !== userId)
+    .map((uid) => {
+      const idx = allUsers.indexOf(uid);
+      return idx >= 0 ? `#${idx + 1}` : '?';
+    });
+
+  // 타이핑 점 애니메이션
+  const dotAnims = useRef([0, 1, 2].map(() => new Animated.Value(0))).current;
+  useEffect(() => {
+    if (typingLabels.length === 0) {
+      dotAnims.forEach((a) => a.setValue(0));
+      return;
+    }
+    const animations = dotAnims.map((anim, i) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(i * 150),
+          Animated.timing(anim, { toValue: 1, duration: 280, useNativeDriver: true }),
+          Animated.timing(anim, { toValue: 0, duration: 280, useNativeDriver: true }),
+        ])
+      )
+    );
+    animations.forEach((a) => a.start());
+    return () => animations.forEach((a) => a.stop());
+  }, [typingLabels.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (!roomId) {
       wsClient.send({ type: 'JOIN_ROOM', room_id: routeRoomId });
@@ -88,9 +119,11 @@ export default function ChatScreen() {
     if (!text) return;
     if (typingTimer.current) clearTimeout(typingTimer.current);
     wsClient.send({ type: 'TYPING', is_typing: false });
-    wsClient.send({ type: 'CHAT', content: text, timestamp: new Date().toISOString() });
+
+    const msgId = genMsgId();
+    wsClient.send({ type: 'CHAT', msg_id: msgId, content: text, timestamp: new Date().toISOString() });
     addMessage({
-      id: `${Date.now()}`,
+      id: msgId,
       senderId: userId,
       content: text,
       contentType: 'text',
@@ -109,7 +142,6 @@ export default function ChatScreen() {
     if (typingTimer.current) clearTimeout(typingTimer.current);
 
     if (text.length > 0) {
-      // 쓰로틀: 마지막 전송으로부터 TYPING_THROTTLE_MS 초과 시에만 전송
       if (now - lastTypingTrueAt.current >= TYPING_THROTTLE_MS) {
         wsClient.send({ type: 'TYPING', is_typing: true });
         lastTypingTrueAt.current = now;
@@ -122,11 +154,11 @@ export default function ChatScreen() {
     }
   }
 
-  function sendReaction(emoji: string) {
-    if (!reactionTargetId) return;
-    wsClient.send({ type: 'REACT', message_id: reactionTargetId, emoji });
-    // 내 리액션도 즉시 반영
-    useStore.getState().addReaction(reactionTargetId, emoji, userId);
+  // 리액션 피커에서 선택 시
+  function sendReaction(messageId: string, emoji: string) {
+    wsClient.send({ type: 'REACT', message_id: messageId, emoji });
+    useStore.getState().addReaction(messageId, emoji, userId);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setReactionTargetId(null);
   }
 
@@ -156,7 +188,7 @@ export default function ChatScreen() {
     const asset = result.assets[0];
     const mimeType = asset.mimeType ?? 'image/jpeg';
     const base64 = asset.base64!;
-    const msgId = `img-${Date.now()}`;
+    const msgId = `img-${genMsgId()}`;
 
     webrtcManager.sendImageToAll(msgId, base64, mimeType);
     addMessage({
@@ -219,13 +251,6 @@ export default function ChatScreen() {
 
   const canChat = queueStatus === 'active' || queueStatus === 'timebomb';
 
-  const typingLabels = typingUsers
-    .filter((uid) => uid !== userId)
-    .map((uid) => {
-      const idx = allUsers.indexOf(uid);
-      return idx >= 0 ? `#${idx + 1}` : '?';
-    });
-
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ConnectionBanner visible={!wsConnected} />
@@ -246,11 +271,9 @@ export default function ChatScreen() {
       {queueStatus === 'matched_waiting' && matchDeadlineEndsAt && (
         <MatchDeadlineBar endsAt={matchDeadlineEndsAt} />
       )}
-
       {queueStatus === 'timebomb' && timebombEndsAt && (
         <TimeBombBar endsAt={timebombEndsAt} onExpire={() => {}} />
       )}
-
       {queueStatus === 'matched_waiting' && (
         <View style={styles.waitingOverlay}>
           <Text style={styles.waitingText}>⏳ 나머지 인원 입장 대기 중...</Text>
@@ -284,7 +307,7 @@ export default function ChatScreen() {
               <TouchableOpacity
                 key={emoji}
                 style={styles.reactionBtn}
-                onPress={() => sendReaction(emoji)}
+                onPress={() => reactionTargetId && sendReaction(reactionTargetId, emoji)}
               >
                 <Text style={styles.reactionEmoji}>{emoji}</Text>
               </TouchableOpacity>
@@ -313,7 +336,8 @@ export default function ChatScreen() {
             const senderIdx = allUsers.indexOf(item.senderId);
             const senderColor = getColor(item.senderId);
             const senderLabel = senderIdx >= 0 ? `#${senderIdx + 1}` : '?';
-            const reactionEntries = (Object.entries(item.reactions ?? {}) as [string, string[]][]).filter(([, uids]) => uids.length > 0);
+            const reactionEntries = (Object.entries(item.reactions ?? {}) as [string, string[]][])
+              .filter(([, uids]) => uids.length > 0);
 
             return (
               <View style={[styles.bubble, item.isMine && styles.bubbleMine]}>
@@ -327,11 +351,11 @@ export default function ChatScreen() {
                   <TouchableOpacity
                     activeOpacity={0.85}
                     onLongPress={() => {
-                      if (item.contentType === 'text') {
+                      if (item.contentType === 'image') {
+                        saveImage(item.content);
+                      } else {
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                         setReactionTargetId(item.id);
-                      } else {
-                        saveImage(item.content);
                       }
                     }}
                   >
@@ -364,7 +388,7 @@ export default function ChatScreen() {
                           <TouchableOpacity
                             key={emoji}
                             style={[styles.reactionChip, iMine && styles.reactionChipMine]}
-                            onPress={() => sendReaction(emoji)}
+                            onPress={() => sendReaction(item.id, emoji)}
                           >
                             <Text style={styles.reactionChipEmoji}>{emoji}</Text>
                             <Text style={styles.reactionChipCount}>{uids.length}</Text>
@@ -388,11 +412,19 @@ export default function ChatScreen() {
           }
         />
 
-        {/* 타이핑 인디케이터 */}
+        {/* 타이핑 인디케이터 (애니메이션 점) */}
         {typingLabels.length > 0 && (
           <View style={styles.typingRow}>
             <View style={styles.typingDots}>
-              {[0, 1, 2].map((i) => <View key={i} style={styles.typingDot} />)}
+              {dotAnims.map((anim, i) => (
+                <Animated.View
+                  key={i}
+                  style={[styles.typingDot, {
+                    transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [0, -4] }) }],
+                    opacity: anim.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }),
+                  }]}
+                />
+              ))}
             </View>
             <Text style={styles.typingText}>{typingLabels.join(', ')} 입력 중</Text>
           </View>
@@ -494,10 +526,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: 16, paddingVertical: 6,
   },
-  typingDots: { flexDirection: 'row', gap: 3, marginRight: 8 },
+  typingDots: { flexDirection: 'row', gap: 4, marginRight: 8, alignItems: 'flex-end' },
   typingDot: {
-    width: 5, height: 5, borderRadius: 3,
-    backgroundColor: '#6B7280',
+    width: 6, height: 6, borderRadius: 3,
+    backgroundColor: '#7C3AED',
   },
   typingText: { color: '#6B7280', fontSize: 12 },
 

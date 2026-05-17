@@ -156,7 +156,13 @@ class RoomManager:
             if not self._check_chat_rate(room, sender_id):
                 return False  # 속도 제한 초과
 
-            payload = {**message, "sender_id": sender_id}
+            # 클라이언트가 보낸 msg_id 사용 (없으면 서버에서 생성)
+            msg_id = (message.get("msg_id") or "").strip()
+            if not msg_id:
+                import uuid as _uuid
+                msg_id = str(_uuid.uuid4())[:12]
+
+            payload = {**message, "sender_id": sender_id, "msg_id": msg_id, "reactions": {}}
             # 히스토리에 저장 (최대 MAX_HISTORY개)
             room.message_history.append(payload)
             if len(room.message_history) > MAX_HISTORY:
@@ -192,12 +198,23 @@ class RoomManager:
     async def relay_react(
         self, room_id: str, sender_id: str, message_id: str, emoji: str
     ) -> bool:
-        """이모지 리액션을 중계합니다. 유효하지 않은 이모지면 False 반환."""
+        """이모지 리액션을 중계하고 히스토리에도 반영합니다."""
         if emoji not in VALID_EMOJIS:
             return False
         room = self.rooms.get(room_id)
         if not room or room.status not in (RoomStatus.ACTIVE, RoomStatus.TIMEBOMB):
             return False
+
+        # 히스토리의 해당 메시지에 리액션 반영 (토글)
+        for msg in room.message_history:
+            if msg.get("msg_id") == message_id:
+                reactions = msg.setdefault("reactions", {})
+                uids: list = reactions.setdefault(emoji, [])
+                if sender_id in uids:
+                    uids.remove(sender_id)
+                else:
+                    uids.append(sender_id)
+                break
 
         await self._broadcast(room_id, {
             "type": "REACT",
