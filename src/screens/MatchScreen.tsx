@@ -101,7 +101,7 @@ export default function MatchScreen() {
         {/* 헤더 */}
         <View style={styles.header}>
           <Text style={styles.logo}>4table</Text>
-          <Text style={styles.tagline}>동네 사람 4명, 5분 대화</Text>
+          <Text style={styles.tagline}>동네 사람 4명, 익명 채팅</Text>
         </View>
 
         {/* 위치 */}
@@ -170,7 +170,7 @@ export default function MatchScreen() {
 
         {/* 안내 */}
         <View style={styles.infoRow}>
-          {['익명', '4명', '5분'].map((label) => (
+          {['익명', '4명', '지역'].map((label) => (
             <View key={label} style={styles.infoChip}>
               <Text style={styles.infoText}>{label}</Text>
             </View>

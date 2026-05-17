@@ -5,6 +5,7 @@ type StateHandler = () => void;
 
 class WSClient {
   private ws: WebSocket | null = null;
+  private wsGen = 0;  // 세대 카운터 — 구버전 WS 이벤트 무시
   private userId = '';
   private deviceToken = '';
   private handler: MessageHandler | null = null;
@@ -27,56 +28,82 @@ class WSClient {
   }
 
   private _open() {
-    if (this.ws && this.ws.readyState <= WebSocket.OPEN) return;
+    // 이미 연결 시도 중이면 중복 시작 방지
+    if (this.ws?.readyState === WebSocket.CONNECTING) return;
 
+    this._cancelReconnect();
+
+    // 이전 WS 핸들러를 먼저 제거해 stale onclose 이벤트 차단
+    const old = this.ws;
+    this.ws = null;
+    if (old) {
+      old.onopen = null;
+      old.onmessage = null;
+      old.onclose = null;
+      old.onerror = null;
+      if (old.readyState < WebSocket.CLOSING) old.close();
+    }
+
+    const gen = ++this.wsGen;
     const url = `${WS_URL}?user_id=${encodeURIComponent(this.userId)}&device_token=${encodeURIComponent(this.deviceToken)}`;
-    this.ws = new WebSocket(url);
+    const ws = new WebSocket(url);
+    this.ws = ws;
 
-    this.ws.onopen = () => {
+    ws.onopen = () => {
+      if (this.wsGen !== gen) return;
       this.connected = true;
       this._cancelReconnect();
       this._startPing();
       this.onConnectCb?.();
     };
 
-    this.ws.onmessage = (event: MessageEvent) => {
+    ws.onmessage = (event: MessageEvent) => {
+      if (this.wsGen !== gen) return;
       try {
         const msg = JSON.parse(event.data as string) as Record<string, unknown>;
         this.handler?.(msg);
       } catch {
-        // invalid json
+        // invalid JSON
       }
     };
 
-    this.ws.onclose = () => {
+    ws.onclose = () => {
+      if (this.wsGen !== gen) return;  // 구버전 WS 이벤트 무시
       this.connected = false;
       this._stopPing();
       this.onDisconnectCb?.();
-      // 의도하지 않은 종료면 5초 후 재연결 시도
       if (!this.intentionalClose && this.userId) {
-        this.reconnectTimer = setTimeout(() => this._open(), 5000);
+        this.reconnectTimer = setTimeout(() => this._open(), 3000);
       }
     };
 
-    this.ws.onerror = () => {
-      this.connected = false;
+    ws.onerror = () => {
+      if (this.wsGen !== gen) return;
+      // onclose가 바로 뒤에 호출되므로 여기서는 별도 처리 불필요
     };
   }
 
   reconnect() {
     if (!this.userId) return;
     this.intentionalClose = false;
-    this.ws?.close();
-    this._open();
+    this._open();  // _open()이 이전 WS 정리 + 새 연결 모두 처리
   }
 
   disconnect() {
     this.intentionalClose = true;
+    this.wsGen++;  // 모든 pending 이벤트 무효화
     this._stopPing();
     this._cancelReconnect();
-    this.ws?.close();
+    const old = this.ws;
     this.ws = null;
     this.connected = false;
+    if (old) {
+      old.onopen = null;
+      old.onmessage = null;
+      old.onclose = null;
+      old.onerror = null;
+      old.close();
+    }
   }
 
   send(msg: object) {
