@@ -112,7 +112,7 @@ export default function App() {
     } else {
       setQueueStatus('matched_waiting');
     }
-  }, [setAllUsers, setConnectedUsers, setRoomId, setQueueStatus, setMessages, startTimebomb]);
+  }, [setAllUsers, setConnectedUsers, setRoomId, setQueueStatus, setMessages, startTimebomb, addMessage]);
 
   // ── WS 메시지 핸들러 ────────────────────────────────────────────────────
   const handleWsMessage = useCallback((msg: Record<string, unknown>) => {
@@ -163,6 +163,15 @@ export default function App() {
           webrtcManager.cleanup();
           webrtcManager.initRoom(users, myId);
         }
+        addMessage({
+          id: `sys-active-${Date.now()}`,
+          senderId: '',
+          content: '4명 모두 입장! 대화를 시작하세요 🎉',
+          contentType: 'system',
+          timestamp: new Date().toISOString(),
+          isMine: false,
+          reactions: {},
+        });
         break;
       }
 
@@ -170,6 +179,19 @@ export default function App() {
       case 'USER_DISCONNECTED': {
         const connected = (msg.connected_users as string[]) ?? [];
         setConnectedUsers(connected);
+        const eventUid = msg.user_id as string;
+        const { allUsers: currentUsers } = useStore.getState();
+        const uidIdx = currentUsers.indexOf(eventUid);
+        const uidLabel = uidIdx >= 0 ? `#${uidIdx + 1}` : '?';
+        addMessage({
+          id: `sys-${type}-${Date.now()}`,
+          senderId: '',
+          content: type === 'USER_CONNECTED' ? `${uidLabel} 재접속 ✓` : `${uidLabel} 연결 끊김`,
+          contentType: 'system',
+          timestamp: new Date().toISOString(),
+          isMine: false,
+          reactions: {},
+        });
         break;
       }
 
@@ -219,14 +241,38 @@ export default function App() {
         webrtcManager.handleSignal(msg);
         break;
 
-      case 'TIMEBOMB_TRIGGERED':
-        startTimebomb((msg.countdown_seconds as number) ?? 300);
+      case 'TIMEBOMB_TRIGGERED': {
+        const bombSecs = (msg.countdown_seconds as number) ?? 300;
+        startTimebomb(bombSecs);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        const triggerUid = msg.trigger_user_id as string;
+        const { allUsers: bombUsers } = useStore.getState();
+        const triggerIdx = bombUsers.indexOf(triggerUid);
+        const triggerLabel = triggerIdx >= 0 ? `#${triggerIdx + 1}` : '?';
+        addMessage({
+          id: `sys-bomb-${Date.now()}`,
+          senderId: '',
+          content: `⏰ ${triggerLabel}이 나갔습니다. ${bombSecs}초 후 방 종료`,
+          contentType: 'system',
+          timestamp: new Date().toISOString(),
+          isMine: false,
+          reactions: {},
+        });
         break;
+      }
 
       case 'TIMEBOMB_CANCELLED':
         cancelTimebomb();
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        addMessage({
+          id: `sys-diffuse-${Date.now()}`,
+          senderId: '',
+          content: '🛡️ 모두 돌아왔습니다! 대화를 계속합니다',
+          contentType: 'system',
+          timestamp: new Date().toISOString(),
+          isMine: false,
+          reactions: {},
+        });
         break;
 
       case 'ROOM_DESTROYED':

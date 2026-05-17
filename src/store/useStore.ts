@@ -6,7 +6,7 @@ export type ChatMessage = {
   id: string;
   senderId: string;
   content: string;
-  contentType: 'text' | 'image';
+  contentType: 'text' | 'image' | 'system';
   timestamp: string;
   isMine: boolean;
   reactions: Record<string, string[]>; // emoji -> [userIds]

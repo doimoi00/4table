@@ -56,12 +56,15 @@ export default function ChatScreen() {
 
   const [input, setInput] = useState('');
   const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [reactionTargetId, setReactionTargetId] = useState<string | null>(null);
+  const [fullscreenImage, setFullscreenImage] = useState<string | null>(null);
 
   const listRef = useRef<FlatList>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTypingTrueAt = useRef<number>(0);
   const prevMsgCount = useRef(0);
+  const isNearBottomRef = useRef(true);
 
   const typingLabels = typingUsers
     .filter((uid) => uid !== userId)
@@ -100,10 +103,15 @@ export default function ChatScreen() {
   useEffect(() => {
     if (messages.length > prevMsgCount.current) {
       const latest = messages[messages.length - 1];
-      if (!latest.isMine) {
+      if (!latest.isMine && latest.contentType !== 'system') {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
-      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+      if (isNearBottomRef.current) {
+        setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+        setUnreadCount(0);
+      } else if (!latest.isMine && latest.contentType !== 'system') {
+        setUnreadCount((c) => c + (messages.length - prevMsgCount.current));
+      }
     }
     prevMsgCount.current = messages.length;
   }, [messages.length]);
@@ -284,9 +292,17 @@ export default function ChatScreen() {
       {showScrollBtn && (
         <TouchableOpacity
           style={styles.scrollBtn}
-          onPress={() => listRef.current?.scrollToEnd({ animated: true })}
+          onPress={() => {
+            listRef.current?.scrollToEnd({ animated: true });
+            setUnreadCount(0);
+          }}
         >
           <Text style={styles.scrollBtnText}>↓</Text>
+          {unreadCount > 0 && (
+            <View style={styles.scrollBtnBadge}>
+              <Text style={styles.scrollBtnBadgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+            </View>
+          )}
         </TouchableOpacity>
       )}
 
@@ -316,6 +332,27 @@ export default function ChatScreen() {
         </TouchableOpacity>
       </Modal>
 
+      {/* 이미지 풀스크린 모달 */}
+      <Modal
+        visible={fullscreenImage !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setFullscreenImage(null)}
+        statusBarTranslucent
+      >
+        <TouchableOpacity
+          style={styles.fullscreenOverlay}
+          activeOpacity={1}
+          onPress={() => setFullscreenImage(null)}
+        >
+          <Image
+            source={{ uri: fullscreenImage! }}
+            style={styles.fullscreenImg}
+            resizeMode="contain"
+          />
+        </TouchableOpacity>
+      </Modal>
+
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -329,10 +366,22 @@ export default function ChatScreen() {
           onScroll={(e) => {
             const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
             const distFromBottom = contentSize.height - contentOffset.y - layoutMeasurement.height;
-            setShowScrollBtn(distFromBottom > 120);
+            const near = distFromBottom < 120;
+            isNearBottomRef.current = near;
+            setShowScrollBtn(!near);
+            if (near) setUnreadCount(0);
           }}
           scrollEventThrottle={200}
           renderItem={({ item }) => {
+            // 시스템 메시지 (입장/퇴장/폭탄 알림)
+            if (item.contentType === 'system') {
+              return (
+                <View style={styles.systemMsgRow}>
+                  <Text style={styles.systemMsgText}>{item.content}</Text>
+                </View>
+              );
+            }
+
             const senderIdx = allUsers.indexOf(item.senderId);
             const senderColor = getColor(item.senderId);
             const senderLabel = senderIdx >= 0 ? `#${senderIdx + 1}` : '?';
@@ -350,6 +399,9 @@ export default function ChatScreen() {
                 <View style={styles.bubbleCol}>
                   <TouchableOpacity
                     activeOpacity={0.85}
+                    onPress={() => {
+                      if (item.contentType === 'image') setFullscreenImage(item.content);
+                    }}
                     onLongPress={() => {
                       if (item.contentType === 'image') {
                         saveImage(item.content);
@@ -563,6 +615,28 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   scrollBtnText: { color: '#fff', fontSize: 18, lineHeight: 22 },
+  scrollBtnBadge: {
+    position: 'absolute', top: -4, right: -4,
+    backgroundColor: '#EF4444', borderRadius: 10,
+    minWidth: 18, height: 18,
+    alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  scrollBtnBadgeText: { color: '#fff', fontSize: 10, fontWeight: '700' },
+
+  systemMsgRow: { alignItems: 'center', marginVertical: 6 },
+  systemMsgText: {
+    color: '#6B7280', fontSize: 12, textAlign: 'center',
+    backgroundColor: '#111827', borderRadius: 12,
+    paddingHorizontal: 12, paddingVertical: 4,
+    overflow: 'hidden',
+  },
+
+  fullscreenOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.92)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  fullscreenImg: { width: '100%', height: '100%' },
 
   reactionOverlay: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
