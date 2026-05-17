@@ -125,12 +125,21 @@ ws://host:8000/ws?user_id=<uid>&device_token=<fcm_token>
 - `all_users`: 방의 4명 전체 목록 (순서 고정, 색상 지정 기준)
 - `timebomb_remaining_seconds`: `status == "TIMEBOMB"` 일 때만 포함
 
-#### USER_CONNECTED — 대기 중 다른 유저 입장 알림
+#### USER_CONNECTED — 다른 유저 입장 알림
 ```json
 {
   "type": "USER_CONNECTED",
   "user_id": "user_c",
   "connected_users": ["user_a", "user_b", "user_c"]
+}
+```
+
+#### USER_DISCONNECTED — 유저 연결 끊김 알림 (ACTIVE/TIMEBOMB 상태)
+```json
+{
+  "type": "USER_DISCONNECTED",
+  "user_id": "user_c",
+  "connected_users": ["user_a", "user_b"]
 }
 ```
 
@@ -175,6 +184,20 @@ ws://host:8000/ws?user_id=<uid>&device_token=<fcm_token>
   "content": "안녕하세요!",
   "timestamp": "2026-05-17T12:34:56Z"
 }
+```
+
+### 타이핑 인디케이터
+
+#### 클라이언트 → 서버
+```json
+{ "type": "TYPING", "is_typing": true }
+```
+- 입력 시작 시 `is_typing: true`, 2.5초 무입력 또는 전송 시 `is_typing: false`
+- ACTIVE / TIMEBOMB 상태에서만 유효
+
+#### 서버 → 클라이언트 (나머지 3명에게 중계)
+```json
+{ "type": "TYPING", "user_id": "user_a", "is_typing": true }
 ```
 
 ---
@@ -307,9 +330,11 @@ ws://host:8000/ws?user_id=<uid>&device_token=<fcm_token>
 | `CANCEL_QUEUE` | C→S | 매칭 취소 |
 | `JOIN_ROOM` | C→S | 룸 입장 (푸시 복귀) |
 | `CHAT` | 양방향 | 텍스트 채팅 |
+| `TYPING` | 양방향 | 타이핑 인디케이터 |
 | `SIGNAL` | 양방향 | WebRTC 시그널링 |
 | `LEAVE` | C→S | 명시적 퇴장 |
 | `PING` | C→S | 연결 유지 |
+| `PONG` | C→S | 서버 ping 응답 |
 | `QUEUE_JOINED` | S→C | 큐 등록 확인 |
 | `QUEUE_SIZE_UPDATED` | S→C | 대기 인원 변경 (실시간) |
 | `QUEUE_CANCELLED` | S→C | 큐 취소 확인 |
@@ -317,7 +342,8 @@ ws://host:8000/ws?user_id=<uid>&device_token=<fcm_token>
 | `MATCHED` | S→C | 4인 매칭 완료 |
 | `ROOM_JOINED` | S→C | 룸 입장 확인 (all_users, timebomb_remaining 포함) |
 | `ROOM_ACTIVE` | S→C | 전원 입장, 채팅 시작 |
-| `USER_CONNECTED` | S→C | 대기 중 유저 입장 알림 |
+| `USER_CONNECTED` | S→C | 유저 입장 알림 |
+| `USER_DISCONNECTED` | S→C | 유저 연결 끊김 알림 (ACTIVE/TIMEBOMB) |
 | `MATCH_FAILED` | S→C | 60초 타임아웃 |
 | `TIMEBOMB_TRIGGERED` | S→C | 5분 카운트다운 시작 |
 | `TIMEBOMB_CANCELLED` | S→C | 카운트다운 해제 |

@@ -9,6 +9,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library';
+import * as Haptics from 'expo-haptics';
 import { useStore } from '../store/useStore';
 import { wsClient } from '../lib/websocket';
 import { webrtcManager } from '../lib/webrtc';
@@ -34,13 +35,15 @@ function UserDot({ userId, users, connectedUsers }: {
   );
 }
 
+const TYPING_STOP_DELAY = 2500; // ms — 입력 멈춘 후 TYPING=false 전송 딜레이
+
 export default function ChatScreen() {
   const route = useRoute<Route>();
   const nav = useNavigation<Nav>();
   const { roomId: routeRoomId } = route.params;
 
   const {
-    userId, messages, addMessage, connectedUsers,
+    userId, messages, addMessage, connectedUsers, typingUsers,
     queueStatus, timebombEndsAt, matchDeadlineEndsAt,
     resetRoom, roomId, allUsers, wsConnected,
   } = useStore();
@@ -48,6 +51,8 @@ export default function ChatScreen() {
   const [input, setInput] = useState('');
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const listRef = useRef<FlatList>(null);
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevMsgCount = useRef(0);
 
   useEffect(() => {
     if (!roomId) {
@@ -55,10 +60,16 @@ export default function ChatScreen() {
     }
   }, []);
 
+  // 새 메시지 도착 시 스크롤 + 햅틱
   useEffect(() => {
-    if (messages.length > 0) {
+    if (messages.length > prevMsgCount.current) {
+      const latest = messages[messages.length - 1];
+      if (!latest.isMine) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
     }
+    prevMsgCount.current = messages.length;
   }, [messages.length]);
 
   useEffect(() => {
@@ -70,6 +81,9 @@ export default function ChatScreen() {
   function sendMessage() {
     const text = input.trim();
     if (!text) return;
+    // 전송 시 타이핑 상태 즉시 해제
+    if (typingTimer.current) clearTimeout(typingTimer.current);
+    wsClient.send({ type: 'TYPING', is_typing: false });
     wsClient.send({ type: 'CHAT', content: text, timestamp: new Date().toISOString() });
     addMessage({
       id: `${Date.now()}`,
@@ -80,6 +94,21 @@ export default function ChatScreen() {
       isMine: true,
     });
     setInput('');
+  }
+
+  function handleInputChange(text: string) {
+    setInput(text);
+    if (!canChat) return;
+    // 타이핑 인디케이터 디바운스
+    if (typingTimer.current) clearTimeout(typingTimer.current);
+    if (text.length > 0) {
+      wsClient.send({ type: 'TYPING', is_typing: true });
+      typingTimer.current = setTimeout(() => {
+        wsClient.send({ type: 'TYPING', is_typing: false });
+      }, TYPING_STOP_DELAY);
+    } else {
+      wsClient.send({ type: 'TYPING', is_typing: false });
+    }
   }
 
   const sendImage = useCallback(async (fromCamera: boolean) => {
@@ -153,6 +182,7 @@ export default function ChatScreen() {
           text: '나가기',
           style: 'destructive',
           onPress: () => {
+            if (typingTimer.current) clearTimeout(typingTimer.current);
             wsClient.send({ type: 'LEAVE' });
             resetRoom();
             nav.navigate('Match');
@@ -168,6 +198,14 @@ export default function ChatScreen() {
   };
 
   const canChat = queueStatus === 'active' || queueStatus === 'timebomb';
+
+  // 타이핑 중인 유저의 레이블 목록 (내 ID 제외)
+  const typingLabels = typingUsers
+    .filter((uid) => uid !== userId)
+    .map((uid) => {
+      const idx = allUsers.indexOf(uid);
+      return idx >= 0 ? `#${idx + 1}` : '?';
+    });
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -278,6 +316,20 @@ export default function ChatScreen() {
           }
         />
 
+        {/* 타이핑 인디케이터 */}
+        {typingLabels.length > 0 && (
+          <View style={styles.typingRow}>
+            <View style={styles.typingDots}>
+              {[0, 1, 2].map((i) => (
+                <View key={i} style={styles.typingDot} />
+              ))}
+            </View>
+            <Text style={styles.typingText}>
+              {typingLabels.join(', ')} 입력 중
+            </Text>
+          </View>
+        )}
+
         <SafeAreaView edges={['bottom']} style={styles.inputArea}>
           <TouchableOpacity
             style={styles.imageBtn}
@@ -289,7 +341,7 @@ export default function ChatScreen() {
           <TextInput
             style={styles.input}
             value={input}
-            onChangeText={setInput}
+            onChangeText={handleInputChange}
             placeholder="메시지 입력..."
             placeholderTextColor="#4B5563"
             returnKeyType="send"
@@ -356,6 +408,17 @@ const styles = StyleSheet.create({
 
   emptyContainer: { flex: 1, alignItems: 'center', paddingTop: 60 },
   emptyText: { color: '#374151', fontSize: 14 },
+
+  typingRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 16, paddingVertical: 6,
+  },
+  typingDots: { flexDirection: 'row', gap: 3, marginRight: 8 },
+  typingDot: {
+    width: 5, height: 5, borderRadius: 3,
+    backgroundColor: '#6B7280',
+  },
+  typingText: { color: '#6B7280', fontSize: 12 },
 
   inputArea: {
     flexDirection: 'row', alignItems: 'flex-end',

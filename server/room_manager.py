@@ -162,7 +162,7 @@ class RoomManager:
 
     # ─── 연결 해제 처리 ───────────────────────────────────────────────────────
 
-    async def handle_disconnect(self, room_id: str, user_id: str) -> None:
+    async def handle_disconnect(self, room_id: str, user_id: str, ws=None) -> None:
         """WebSocket 연결이 끊겼을 때 — 재접속 유예 후 폭탄 트리거."""
         room = self.rooms.get(room_id)
         if not room or room.status in (RoomStatus.DESTROYED, RoomStatus.MATCHED_WAITING):
@@ -172,11 +172,23 @@ class RoomManager:
         if not user:
             return
 
+        # SESSION_REPLACED 레이스 방지: 새 WS가 이미 연결된 경우 무시
+        if ws is not None and user.ws is not None and user.ws is not ws:
+            logger.info(f"[룸:{room_id}] {user_id} 연결 해제 무시 (새 WS로 교체됨)")
+            return
+
         user.connected = False
         user.disconnected_at = datetime.utcnow()
         user.ws = None
 
-        logger.info(f"[룸:{room_id}] {user_id} 연결 끊김")
+        connected_ids = [uid for uid, u in room.users.items() if u.connected]
+        logger.info(f"[룸:{room_id}] {user_id} 연결 끊김 (연결 중: {len(connected_ids)}명)")
+
+        await self._broadcast(room_id, {
+            "type": "USER_DISCONNECTED",
+            "user_id": user_id,
+            "connected_users": connected_ids,
+        })
 
         if room.status == RoomStatus.ACTIVE:
             task = asyncio.create_task(self._reconnect_grace(room_id, user_id))
@@ -197,6 +209,17 @@ class RoomManager:
 
         if room.status == RoomStatus.ACTIVE:
             await self._trigger_timebomb(room_id, user_id, reason="explicit_leave")
+
+    async def relay_typing(self, room_id: str, user_id: str, is_typing: bool) -> None:
+        """타이핑 상태를 나머지 멤버에게 중계."""
+        room = self.rooms.get(room_id)
+        if not room or room.status not in (RoomStatus.ACTIVE, RoomStatus.TIMEBOMB):
+            return
+        await self._broadcast(room_id, {
+            "type": "TYPING",
+            "user_id": user_id,
+            "is_typing": is_typing,
+        }, exclude=user_id)
 
     # ─── 유틸 ────────────────────────────────────────────────────────────────
 

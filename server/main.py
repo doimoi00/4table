@@ -231,6 +231,13 @@ async def websocket_endpoint(
                     },
                 )
 
+            # ── 타이핑 인디케이터 ─────────────────────────────────────────────
+            elif msg_type == "TYPING":
+                if current_room_id:
+                    await room_manager.relay_typing(
+                        current_room_id, user_id, bool(data.get("is_typing", False))
+                    )
+
             # ── 명시적 퇴장 ──────────────────────────────────────────────────
             elif msg_type == "LEAVE":
                 if current_room_id:
@@ -240,6 +247,9 @@ async def websocket_endpoint(
             # ── 핑/퐁 ────────────────────────────────────────────────────────
             elif msg_type == "PING":
                 await ws.send_json({"type": "PONG"})
+
+            elif msg_type == "PONG":
+                pass  # 서버 keepalive ping에 대한 클라이언트 응답 — 무시
 
             else:
                 await ws.send_json({"type": "ERROR", "code": "UNKNOWN_TYPE", "received": msg_type})
@@ -251,10 +261,12 @@ async def websocket_endpoint(
     finally:
         stop_keepalive.set()
         keepalive_task.cancel()
-        _active_sessions.pop(user_id, None)
-        matchmaker.update_ws(user_id, None)
+        # SESSION_REPLACED 레이스 방지: 이 WS가 아직 active session인 경우만 정리
+        if _active_sessions.get(user_id) is ws:
+            _active_sessions.pop(user_id, None)
+            matchmaker.update_ws(user_id, None)
         if current_room_id:
-            await room_manager.handle_disconnect(current_room_id, user_id)
+            await room_manager.handle_disconnect(current_room_id, user_id, ws)
 
 
 if __name__ == "__main__":

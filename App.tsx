@@ -5,6 +5,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
+import * as Haptics from 'expo-haptics';
 
 import { wsClient } from './src/lib/websocket';
 import { webrtcManager } from './src/lib/webrtc';
@@ -28,7 +29,7 @@ export default function App() {
   const {
     setUserId, setDeviceToken, userId,
     setQueueStatus, setQueueSize, setRoomId, addMessage,
-    setAllUsers, setConnectedUsers, startTimebomb, cancelTimebomb,
+    setAllUsers, setConnectedUsers, setTypingUser, startTimebomb, cancelTimebomb,
     resetRoom, startMatchDeadline, setWsConnected,
   } = useStore();
 
@@ -118,6 +119,7 @@ export default function App() {
         setRoomId(roomId);
         setQueueStatus('matched_waiting');
         startMatchDeadline((msg.deadline_seconds as number) ?? 60);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         if (navRef.current?.isReady()) {
           navRef.current.navigate('Chat', { roomId });
         }
@@ -142,11 +144,23 @@ export default function App() {
         break;
       }
 
-      case 'USER_CONNECTED': {
+      case 'USER_CONNECTED':
+      case 'USER_DISCONNECTED': {
         const connected = (msg.connected_users as string[]) ?? [];
         setConnectedUsers(connected);
         break;
       }
+
+      case 'TYPING': {
+        const typingUserId = msg.user_id as string;
+        const isTyping = msg.is_typing as boolean;
+        setTypingUser(typingUserId, isTyping);
+        break;
+      }
+
+      case 'PING':
+        wsClient.send({ type: 'PONG' });
+        break;
 
       case 'SESSION_REPLACED':
         // 같은 user_id로 새 연결이 들어와 이 세션이 종료됨 — 자동 재연결 방지
@@ -178,15 +192,18 @@ export default function App() {
 
       case 'TIMEBOMB_TRIGGERED':
         startTimebomb((msg.countdown_seconds as number) ?? 300);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
         break;
 
       case 'TIMEBOMB_CANCELLED':
         cancelTimebomb();
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         break;
 
       case 'ROOM_DESTROYED':
         resetRoom();
         webrtcManager.cleanup();
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         if (navRef.current?.isReady()) {
           navRef.current.navigate('Match');
         }
@@ -194,7 +211,7 @@ export default function App() {
     }
   }, [
     setQueueStatus, setQueueSize, setRoomId, addMessage,
-    setAllUsers, setConnectedUsers, startTimebomb, cancelTimebomb,
+    setAllUsers, setConnectedUsers, setTypingUser, startTimebomb, cancelTimebomb,
     resetRoom, startMatchDeadline, handleRoomJoined,
   ]);
 
