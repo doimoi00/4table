@@ -9,6 +9,7 @@ export type ChatMessage = {
   contentType: 'text' | 'image';
   timestamp: string;
   isMine: boolean;
+  reactions: Record<string, string[]>; // emoji -> [userIds]
 };
 
 type State = {
@@ -18,6 +19,7 @@ type State = {
   locationDisplay: string;
   queueStatus: QueueStatus;
   queueSize: number;
+  queueNeeded: number;
   roomId: string | null;
   allUsers: string[];          // 방의 전체 4명 (순서 고정 — 색상 지정 기준)
   connectedUsers: string[];    // 현재 WS 연결된 유저
@@ -35,11 +37,14 @@ type Actions = {
   setLocation: (key: string, display: string) => void;
   setQueueStatus: (status: QueueStatus) => void;
   setQueueSize: (n: number) => void;
+  setQueueNeeded: (n: number) => void;
   setRoomId: (id: string | null) => void;
   setAllUsers: (users: string[]) => void;
   setConnectedUsers: (users: string[]) => void;
   setTypingUser: (userId: string, isTyping: boolean) => void;
   addMessage: (msg: ChatMessage) => void;
+  setMessages: (msgs: ChatMessage[]) => void;
+  addReaction: (messageId: string, emoji: string, userId: string) => void;
   startTimebomb: (seconds: number) => void;
   cancelTimebomb: () => void;
   startMatchDeadline: (seconds: number) => void;
@@ -54,6 +59,7 @@ export const useStore = create<State & Actions>((set) => ({
   locationDisplay: '',
   queueStatus: 'idle',
   queueSize: 0,
+  queueNeeded: 4,
   roomId: null,
   allUsers: [],
   connectedUsers: [],
@@ -69,6 +75,7 @@ export const useStore = create<State & Actions>((set) => ({
   setLocation: (key, display) => set({ locationKey: key, locationDisplay: display }),
   setQueueStatus: (status) => set({ queueStatus: status }),
   setQueueSize: (n) => set({ queueSize: n }),
+  setQueueNeeded: (n) => set({ queueNeeded: n }),
   setRoomId: (id) => set({ roomId: id }),
   setAllUsers: (users) => set({ allUsers: users }),
   setConnectedUsers: (users) => set({ connectedUsers: users }),
@@ -79,6 +86,22 @@ export const useStore = create<State & Actions>((set) => ({
         : s.typingUsers.filter((id) => id !== userId),
     })),
   addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
+  setMessages: (msgs) => set({ messages: msgs }),
+  addReaction: (messageId, emoji, userId) =>
+    set((s) => ({
+      messages: s.messages.map((m) => {
+        if (m.id !== messageId) return m;
+        const existing = m.reactions[emoji] ?? [];
+        // 토글: 이미 반응했으면 제거, 아니면 추가
+        const updated = existing.includes(userId)
+          ? existing.filter((id) => id !== userId)
+          : [...existing, userId];
+        return {
+          ...m,
+          reactions: { ...m.reactions, [emoji]: updated },
+        };
+      }),
+    })),
   startTimebomb: (seconds) =>
     set({ timebombSeconds: seconds, timebombEndsAt: Date.now() + seconds * 1000, queueStatus: 'timebomb' }),
   cancelTimebomb: () =>

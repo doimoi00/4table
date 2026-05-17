@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Alert, FlatList, Image, KeyboardAvoidingView, Platform,
+  Alert, FlatList, Image, KeyboardAvoidingView, Modal, Platform,
   StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -22,6 +22,10 @@ import type { RootStackParamList } from '../../App';
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Chat'>;
 type Route = RouteProp<RootStackParamList, 'Chat'>;
 
+const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '😡'] as const;
+const TYPING_STOP_DELAY = 2500;   // ms
+const TYPING_THROTTLE_MS = 1000;  // TYPING=true 최소 전송 간격
+
 function UserDot({ userId, users, connectedUsers }: {
   userId: string; users: string[]; connectedUsers: string[];
 }) {
@@ -34,8 +38,6 @@ function UserDot({ userId, users, connectedUsers }: {
     </View>
   );
 }
-
-const TYPING_STOP_DELAY = 2500; // ms — 입력 멈춘 후 TYPING=false 전송 딜레이
 
 export default function ChatScreen() {
   const route = useRoute<Route>();
@@ -50,8 +52,11 @@ export default function ChatScreen() {
 
   const [input, setInput] = useState('');
   const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const [reactionTargetId, setReactionTargetId] = useState<string | null>(null);
+
   const listRef = useRef<FlatList>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastTypingTrueAt = useRef<number>(0);
   const prevMsgCount = useRef(0);
 
   useEffect(() => {
@@ -81,7 +86,6 @@ export default function ChatScreen() {
   function sendMessage() {
     const text = input.trim();
     if (!text) return;
-    // 전송 시 타이핑 상태 즉시 해제
     if (typingTimer.current) clearTimeout(typingTimer.current);
     wsClient.send({ type: 'TYPING', is_typing: false });
     wsClient.send({ type: 'CHAT', content: text, timestamp: new Date().toISOString() });
@@ -92,6 +96,7 @@ export default function ChatScreen() {
       contentType: 'text',
       timestamp: new Date().toISOString(),
       isMine: true,
+      reactions: {},
     });
     setInput('');
   }
@@ -99,16 +104,30 @@ export default function ChatScreen() {
   function handleInputChange(text: string) {
     setInput(text);
     if (!canChat) return;
-    // 타이핑 인디케이터 디바운스
+
+    const now = Date.now();
     if (typingTimer.current) clearTimeout(typingTimer.current);
+
     if (text.length > 0) {
-      wsClient.send({ type: 'TYPING', is_typing: true });
+      // 쓰로틀: 마지막 전송으로부터 TYPING_THROTTLE_MS 초과 시에만 전송
+      if (now - lastTypingTrueAt.current >= TYPING_THROTTLE_MS) {
+        wsClient.send({ type: 'TYPING', is_typing: true });
+        lastTypingTrueAt.current = now;
+      }
       typingTimer.current = setTimeout(() => {
         wsClient.send({ type: 'TYPING', is_typing: false });
       }, TYPING_STOP_DELAY);
     } else {
       wsClient.send({ type: 'TYPING', is_typing: false });
     }
+  }
+
+  function sendReaction(emoji: string) {
+    if (!reactionTargetId) return;
+    wsClient.send({ type: 'REACT', message_id: reactionTargetId, emoji });
+    // 내 리액션도 즉시 반영
+    useStore.getState().addReaction(reactionTargetId, emoji, userId);
+    setReactionTargetId(null);
   }
 
   const sendImage = useCallback(async (fromCamera: boolean) => {
@@ -147,6 +166,7 @@ export default function ChatScreen() {
       contentType: 'image',
       timestamp: new Date().toISOString(),
       isMine: true,
+      reactions: {},
     });
   }, [userId, addMessage]);
 
@@ -199,7 +219,6 @@ export default function ChatScreen() {
 
   const canChat = queueStatus === 'active' || queueStatus === 'timebomb';
 
-  // 타이핑 중인 유저의 레이블 목록 (내 ID 제외)
   const typingLabels = typingUsers
     .filter((uid) => uid !== userId)
     .map((uid) => {
@@ -224,17 +243,14 @@ export default function ChatScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* 매칭 대기 타이머 */}
       {queueStatus === 'matched_waiting' && matchDeadlineEndsAt && (
         <MatchDeadlineBar endsAt={matchDeadlineEndsAt} />
       )}
 
-      {/* 시한폭탄 바 */}
       {queueStatus === 'timebomb' && timebombEndsAt && (
         <TimeBombBar endsAt={timebombEndsAt} onExpire={() => {}} />
       )}
 
-      {/* 대기 중 오버레이 */}
       {queueStatus === 'matched_waiting' && (
         <View style={styles.waitingOverlay}>
           <Text style={styles.waitingText}>⏳ 나머지 인원 입장 대기 중...</Text>
@@ -250,6 +266,32 @@ export default function ChatScreen() {
           <Text style={styles.scrollBtnText}>↓</Text>
         </TouchableOpacity>
       )}
+
+      {/* 이모지 리액션 피커 모달 */}
+      <Modal
+        visible={reactionTargetId !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setReactionTargetId(null)}
+      >
+        <TouchableOpacity
+          style={styles.reactionOverlay}
+          activeOpacity={1}
+          onPress={() => setReactionTargetId(null)}
+        >
+          <View style={styles.reactionPicker}>
+            {REACTION_EMOJIS.map((emoji) => (
+              <TouchableOpacity
+                key={emoji}
+                style={styles.reactionBtn}
+                onPress={() => sendReaction(emoji)}
+              >
+                <Text style={styles.reactionEmoji}>{emoji}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
@@ -271,6 +313,8 @@ export default function ChatScreen() {
             const senderIdx = allUsers.indexOf(item.senderId);
             const senderColor = getColor(item.senderId);
             const senderLabel = senderIdx >= 0 ? `#${senderIdx + 1}` : '?';
+            const reactionEntries = (Object.entries(item.reactions ?? {}) as [string, string[]][]).filter(([, uids]) => uids.length > 0);
+
             return (
               <View style={[styles.bubble, item.isMine && styles.bubbleMine]}>
                 {!item.isMine && (
@@ -279,28 +323,56 @@ export default function ChatScreen() {
                     <Text style={[styles.senderLabel, { color: senderColor }]}>{senderLabel}</Text>
                   </View>
                 )}
-                <View style={[
-                  styles.bubbleBody,
-                  item.isMine ? styles.bubbleBodyMine : styles.bubbleBodyOther,
-                  !item.isMine && { borderLeftColor: senderColor, borderLeftWidth: 3 },
-                ]}>
-                  {item.contentType === 'image' ? (
-                    <TouchableOpacity
-                      onLongPress={() => saveImage(item.content)}
-                      activeOpacity={0.85}
-                    >
-                      <Image
-                        source={{ uri: item.content }}
-                        style={styles.bubbleImage}
-                        resizeMode="contain"
-                      />
-                    </TouchableOpacity>
-                  ) : (
-                    <Text style={styles.bubbleText}>{item.content}</Text>
+                <View style={styles.bubbleCol}>
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onLongPress={() => {
+                      if (item.contentType === 'text') {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                        setReactionTargetId(item.id);
+                      } else {
+                        saveImage(item.content);
+                      }
+                    }}
+                  >
+                    <View style={[
+                      styles.bubbleBody,
+                      item.isMine ? styles.bubbleBodyMine : styles.bubbleBodyOther,
+                      !item.isMine && { borderLeftColor: senderColor, borderLeftWidth: 3 },
+                    ]}>
+                      {item.contentType === 'image' ? (
+                        <Image
+                          source={{ uri: item.content }}
+                          style={styles.bubbleImage}
+                          resizeMode="contain"
+                        />
+                      ) : (
+                        <Text style={styles.bubbleText}>{item.content}</Text>
+                      )}
+                      <Text style={styles.bubbleTime}>
+                        {new Date(item.timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* 리액션 칩 */}
+                  {reactionEntries.length > 0 && (
+                    <View style={[styles.reactionsRow, item.isMine && styles.reactionsRowMine]}>
+                      {reactionEntries.map(([emoji, uids]) => {
+                        const iMine = uids.includes(userId);
+                        return (
+                          <TouchableOpacity
+                            key={emoji}
+                            style={[styles.reactionChip, iMine && styles.reactionChipMine]}
+                            onPress={() => sendReaction(emoji)}
+                          >
+                            <Text style={styles.reactionChipEmoji}>{emoji}</Text>
+                            <Text style={styles.reactionChipCount}>{uids.length}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
                   )}
-                  <Text style={styles.bubbleTime}>
-                    {new Date(item.timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
-                  </Text>
                 </View>
               </View>
             );
@@ -320,13 +392,9 @@ export default function ChatScreen() {
         {typingLabels.length > 0 && (
           <View style={styles.typingRow}>
             <View style={styles.typingDots}>
-              {[0, 1, 2].map((i) => (
-                <View key={i} style={styles.typingDot} />
-              ))}
+              {[0, 1, 2].map((i) => <View key={i} style={styles.typingDot} />)}
             </View>
-            <Text style={styles.typingText}>
-              {typingLabels.join(', ')} 입력 중
-            </Text>
+            <Text style={styles.typingText}>{typingLabels.join(', ')} 입력 중</Text>
           </View>
         )}
 
@@ -393,18 +461,31 @@ const styles = StyleSheet.create({
   messageList: { padding: 16, paddingBottom: 8 },
   bubble: { flexDirection: 'row', marginBottom: 12, alignItems: 'flex-end' },
   bubbleMine: { flexDirection: 'row-reverse' },
+  bubbleCol: { maxWidth: '78%' },
   senderCol: { alignItems: 'center', marginRight: 6, marginBottom: 4 },
   senderDot: { width: 8, height: 8, borderRadius: 4 },
   senderLabel: { fontSize: 9, fontWeight: '700', marginTop: 2 },
+
   bubbleBody: {
-    maxWidth: '78%', backgroundColor: '#111827',
-    borderRadius: 16, padding: 12,
+    backgroundColor: '#111827', borderRadius: 16, padding: 12,
   },
   bubbleBodyMine: { backgroundColor: '#4C1D95' },
   bubbleBodyOther: { paddingLeft: 10 },
   bubbleText: { color: '#F9FAFB', fontSize: 15, lineHeight: 22 },
   bubbleImage: { width: 200, height: 200, borderRadius: 12 },
   bubbleTime: { color: '#6B7280', fontSize: 10, marginTop: 4, textAlign: 'right' },
+
+  reactionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
+  reactionsRowMine: { justifyContent: 'flex-end' },
+  reactionChip: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#1F2937', borderRadius: 12,
+    paddingHorizontal: 8, paddingVertical: 3,
+    borderWidth: 1, borderColor: '#374151',
+  },
+  reactionChipMine: { borderColor: '#7C3AED', backgroundColor: '#2D1B69' },
+  reactionChipEmoji: { fontSize: 13 },
+  reactionChipCount: { color: '#9CA3AF', fontSize: 11, marginLeft: 3 },
 
   emptyContainer: { flex: 1, alignItems: 'center', paddingTop: 60 },
   emptyText: { color: '#374151', fontSize: 14 },
@@ -450,4 +531,22 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   scrollBtnText: { color: '#fff', fontSize: 18, lineHeight: 22 },
+
+  reactionOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  reactionPicker: {
+    flexDirection: 'row', gap: 8,
+    backgroundColor: '#1F2937', borderRadius: 32,
+    paddingHorizontal: 16, paddingVertical: 12,
+    shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 12,
+    elevation: 10,
+  },
+  reactionBtn: {
+    width: 44, height: 44, borderRadius: 22,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#374151',
+  },
+  reactionEmoji: { fontSize: 22 },
 });

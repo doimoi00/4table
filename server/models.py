@@ -1,7 +1,8 @@
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Deque, Dict, List, Optional
 
 
 class RoomStatus(str, Enum):
@@ -27,6 +28,8 @@ class RoomUser:
     ws: Optional[Any] = None
     connected: bool = False
     disconnected_at: Optional[datetime] = None
+    # 채팅 도배 방지: 최근 메시지 발송 타임스탬프 (최대 5개)
+    chat_timestamps: Deque[float] = field(default_factory=lambda: deque(maxlen=5))
 
 
 @dataclass
@@ -41,3 +44,4 @@ class Room:
     connection_timeout_task: Optional[Any] = None   # asyncio.Task
     timebomb_task: Optional[Any] = None             # asyncio.Task
     reconnect_tasks: Dict[str, Any] = field(default_factory=dict)  # user_id -> asyncio.Task
+    message_history: List[dict] = field(default_factory=list)      # 최근 50개 채팅 메시지

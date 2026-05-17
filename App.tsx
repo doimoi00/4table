@@ -28,8 +28,10 @@ export default function App() {
   const navRef = useRef<NavigationContainerRef<RootStackParamList>>(null);
   const {
     setUserId, setDeviceToken, userId,
-    setQueueStatus, setQueueSize, setRoomId, addMessage,
-    setAllUsers, setConnectedUsers, setTypingUser, startTimebomb, cancelTimebomb,
+    setQueueStatus, setQueueSize, setQueueNeeded, setRoomId,
+    addMessage, setMessages, addReaction,
+    setAllUsers, setConnectedUsers, setTypingUser,
+    startTimebomb, cancelTimebomb,
     resetRoom, startMatchDeadline, setWsConnected,
   } = useStore();
 
@@ -68,11 +70,12 @@ export default function App() {
         contentType: 'image',
         timestamp: new Date().toISOString(),
         isMine: false,
+        reactions: {},
       });
     });
   }, [addMessage]);
 
-  // ── WS 메시지 핸들러 ────────────────────────────────────────────────────
+  // ── ROOM_JOINED 핸들러 ───────────────────────────────────────────────────
   const handleRoomJoined = useCallback((msg: Record<string, unknown>) => {
     const allUsers = (msg.all_users as string[]) ?? [];
     const connected = (msg.connected_users as string[]) ?? [];
@@ -80,9 +83,25 @@ export default function App() {
     setConnectedUsers(connected);
     setRoomId(msg.room_id as string);
 
+    // 메시지 히스토리 복원
+    const myId = useStore.getState().userId;
+    const history = (msg.message_history as Array<Record<string, unknown>>) ?? [];
+    if (history.length > 0) {
+      setMessages(
+        history.map((m) => ({
+          id: `hist-${m.sender_id}-${m.timestamp}`,
+          senderId: m.sender_id as string,
+          content: m.content as string,
+          contentType: 'text' as const,
+          timestamp: (m.timestamp as string) ?? new Date().toISOString(),
+          isMine: (m.sender_id as string) === myId,
+          reactions: {},
+        }))
+      );
+    }
+
     if (msg.status === 'ACTIVE') {
       setQueueStatus('active');
-      const myId = useStore.getState().userId;
       if (myId && allUsers.length > 0) {
         webrtcManager.cleanup();
         webrtcManager.initRoom(allUsers, myId);
@@ -93,8 +112,9 @@ export default function App() {
     } else {
       setQueueStatus('matched_waiting');
     }
-  }, [setAllUsers, setConnectedUsers, setRoomId, setQueueStatus, startTimebomb]);
+  }, [setAllUsers, setConnectedUsers, setRoomId, setQueueStatus, setMessages, startTimebomb]);
 
+  // ── WS 메시지 핸들러 ────────────────────────────────────────────────────
   const handleWsMessage = useCallback((msg: Record<string, unknown>) => {
     const type = msg.type as string;
 
@@ -102,16 +122,19 @@ export default function App() {
       case 'QUEUE_JOINED':
         setQueueStatus('queued');
         setQueueSize((msg.queue_size as number) ?? 0);
+        setQueueNeeded((msg.needed as number) ?? 4);
         break;
 
       case 'QUEUE_SIZE_UPDATED':
         setQueueSize((msg.queue_size as number) ?? 0);
+        setQueueNeeded((msg.needed as number) ?? 4);
         break;
 
       case 'QUEUE_CANCELLED':
       case 'QUEUE_EXPIRED':
         setQueueStatus('idle');
         setQueueSize(0);
+        setQueueNeeded(4);
         break;
 
       case 'MATCHED': {
@@ -135,7 +158,6 @@ export default function App() {
         setAllUsers(users);
         setConnectedUsers(users);
         setQueueStatus('active');
-        // WebRTC 메시 연결 시작
         const myId = useStore.getState().userId;
         if (myId && users.length > 0) {
           webrtcManager.cleanup();
@@ -152,9 +174,16 @@ export default function App() {
       }
 
       case 'TYPING': {
-        const typingUserId = msg.user_id as string;
-        const isTyping = msg.is_typing as boolean;
-        setTypingUser(typingUserId, isTyping);
+        setTypingUser(msg.user_id as string, msg.is_typing as boolean);
+        break;
+      }
+
+      case 'REACT': {
+        addReaction(
+          msg.message_id as string,
+          msg.emoji as string,
+          msg.sender_id as string,
+        );
         break;
       }
 
@@ -163,7 +192,6 @@ export default function App() {
         break;
 
       case 'SESSION_REPLACED':
-        // 같은 user_id로 새 연결이 들어와 이 세션이 종료됨 — 자동 재연결 방지
         wsClient.disconnect();
         break;
 
@@ -183,6 +211,7 @@ export default function App() {
           contentType: 'text',
           timestamp: (msg.timestamp as string) ?? new Date().toISOString(),
           isMine: false,
+          reactions: {},
         });
         break;
 
@@ -210,8 +239,10 @@ export default function App() {
         break;
     }
   }, [
-    setQueueStatus, setQueueSize, setRoomId, addMessage,
-    setAllUsers, setConnectedUsers, setTypingUser, startTimebomb, cancelTimebomb,
+    setQueueStatus, setQueueSize, setQueueNeeded, setRoomId,
+    addMessage, setMessages, addReaction,
+    setAllUsers, setConnectedUsers, setTypingUser,
+    startTimebomb, cancelTimebomb,
     resetRoom, startMatchDeadline, handleRoomJoined,
   ]);
 

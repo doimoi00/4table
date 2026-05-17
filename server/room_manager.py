@@ -13,6 +13,7 @@
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -23,6 +24,16 @@ from models import Room, RoomStatus, RoomUser
 from push_service import notify_match_failed, notify_match_found
 
 logger = logging.getLogger(__name__)
+
+# 채팅 도배 방지: 1초 내 최대 메시지 수
+CHAT_RATE_LIMIT = 3
+CHAT_RATE_WINDOW = 1.0  # seconds
+
+# 메시지 히스토리 최대 저장 수
+MAX_HISTORY = 50
+
+# 유효한 이모지 리액션 목록
+VALID_EMOJIS = {"👍", "❤️", "😂", "😮", "😢", "😡"}
 
 
 class RoomManager:
@@ -47,7 +58,6 @@ class RoomManager:
         for uid in users:
             self.user_room_map[uid] = room_id
 
-        # 현재 연결된 유저에게 WS로 즉시 알림
         match_payload = {
             "type": "MATCHED",
             "room_id": room_id,
@@ -62,11 +72,9 @@ class RoomManager:
                 except Exception as e:
                     logger.warning(f"WS 알림 실패 [{user.user_id}]: {e}")
 
-        # 백그라운드 유저를 포함한 전원에게 푸시 알림
         tokens = [e.device_token for e in matched_entries]
         asyncio.create_task(notify_match_found(room_id, location, tokens))
 
-        # 60초 연결 타임아웃 시작
         room.connection_timeout_task = asyncio.create_task(
             self._connection_timeout(room_id)
         )
@@ -91,7 +99,6 @@ class RoomManager:
         user.connected = True
         user.disconnected_at = None
 
-        # 재접속 유예 타이머 취소
         task = room.reconnect_tasks.pop(user_id, None)
         if task:
             task.cancel()
@@ -106,12 +113,11 @@ class RoomManager:
             "all_users": all_user_ids,
             "connected_users": connected_ids,
             "total_users": len(room.users),
+            "message_history": room.message_history,  # 채팅 히스토리 전송
         }
 
         # 폭탄 상태로 재입장: 남은 시간 포함
         if room.status == RoomStatus.TIMEBOMB and room.timebomb_started_at:
-            import time as _time
-            from config import TIMEBOMB_SECONDS
             elapsed = (datetime.utcnow() - room.timebomb_started_at).total_seconds()
             join_payload["timebomb_remaining_seconds"] = max(0, int(TIMEBOMB_SECONDS - elapsed))
 
@@ -135,16 +141,39 @@ class RoomManager:
 
     # ─── 메시지 중계 ─────────────────────────────────────────────────────────
 
-    async def relay_message(self, room_id: str, sender_id: str, message: dict) -> None:
+    async def relay_message(
+        self, room_id: str, sender_id: str, message: dict
+    ) -> bool:
+        """채팅/시그널 메시지를 중계합니다. 채팅 속도 제한 위반 시 False 반환."""
         room = self.rooms.get(room_id)
         if not room or room.status not in (RoomStatus.ACTIVE, RoomStatus.TIMEBOMB):
-            return
+            return True
 
+        msg_type = message.get("type")
+
+        # 텍스트 채팅: 도배 방지 + 히스토리 저장
+        if msg_type == "CHAT":
+            if not self._check_chat_rate(room, sender_id):
+                return False  # 속도 제한 초과
+
+            payload = {**message, "sender_id": sender_id}
+            # 히스토리에 저장 (최대 MAX_HISTORY개)
+            room.message_history.append(payload)
+            if len(room.message_history) > MAX_HISTORY:
+                room.message_history.pop(0)
+
+            for uid, user in room.users.items():
+                if uid != sender_id and user.ws and user.connected:
+                    try:
+                        await user.ws.send_json(payload)
+                    except Exception as e:
+                        logger.warning(f"[룸:{room_id}] 채팅 릴레이 실패 → {uid}: {e}")
+            return True
+
+        # WebRTC 시그널링: target_user_id에게만 전달
         payload = {**message, "sender_id": sender_id}
         target_id = message.get("target_user_id")
-
         if target_id:
-            # WebRTC 시그널링: 특정 유저에게만 전달
             target = room.users.get(target_id)
             if target and target.ws and target.connected:
                 try:
@@ -152,13 +181,42 @@ class RoomManager:
                 except Exception as e:
                     logger.warning(f"[룸:{room_id}] 시그널 릴레이 실패 → {target_id}: {e}")
         else:
-            # 텍스트 채팅: 나머지 전원에게 브로드캐스트
             for uid, user in room.users.items():
                 if uid != sender_id and user.ws and user.connected:
                     try:
                         await user.ws.send_json(payload)
                     except Exception as e:
                         logger.warning(f"[룸:{room_id}] 브로드캐스트 실패 → {uid}: {e}")
+        return True
+
+    async def relay_react(
+        self, room_id: str, sender_id: str, message_id: str, emoji: str
+    ) -> bool:
+        """이모지 리액션을 중계합니다. 유효하지 않은 이모지면 False 반환."""
+        if emoji not in VALID_EMOJIS:
+            return False
+        room = self.rooms.get(room_id)
+        if not room or room.status not in (RoomStatus.ACTIVE, RoomStatus.TIMEBOMB):
+            return False
+
+        await self._broadcast(room_id, {
+            "type": "REACT",
+            "message_id": message_id,
+            "sender_id": sender_id,
+            "emoji": emoji,
+        })
+        return True
+
+    async def relay_typing(self, room_id: str, user_id: str, is_typing: bool) -> None:
+        """타이핑 상태를 나머지 멤버에게 중계."""
+        room = self.rooms.get(room_id)
+        if not room or room.status not in (RoomStatus.ACTIVE, RoomStatus.TIMEBOMB):
+            return
+        await self._broadcast(room_id, {
+            "type": "TYPING",
+            "user_id": user_id,
+            "is_typing": is_typing,
+        }, exclude=user_id)
 
     # ─── 연결 해제 처리 ───────────────────────────────────────────────────────
 
@@ -210,23 +268,27 @@ class RoomManager:
         if room.status == RoomStatus.ACTIVE:
             await self._trigger_timebomb(room_id, user_id, reason="explicit_leave")
 
-    async def relay_typing(self, room_id: str, user_id: str, is_typing: bool) -> None:
-        """타이핑 상태를 나머지 멤버에게 중계."""
-        room = self.rooms.get(room_id)
-        if not room or room.status not in (RoomStatus.ACTIVE, RoomStatus.TIMEBOMB):
-            return
-        await self._broadcast(room_id, {
-            "type": "TYPING",
-            "user_id": user_id,
-            "is_typing": is_typing,
-        }, exclude=user_id)
-
     # ─── 유틸 ────────────────────────────────────────────────────────────────
 
     def get_user_room(self, user_id: str) -> Optional[str]:
         return self.user_room_map.get(user_id)
 
-    # ─── Private lifecycle ───────────────────────────────────────────────────
+    # ─── Private ─────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _check_chat_rate(room: Room, user_id: str) -> bool:
+        """채팅 속도 제한 확인. 1초 내 CHAT_RATE_LIMIT 초과 시 False."""
+        user = room.users.get(user_id)
+        if not user:
+            return False
+        now = time.monotonic()
+        q = user.chat_timestamps
+        while q and now - q[0] > CHAT_RATE_WINDOW:
+            q.popleft()
+        if len(q) >= CHAT_RATE_LIMIT:
+            return False
+        q.append(now)
+        return True
 
     async def _activate_room(self, room_id: str) -> None:
         room = self.rooms.get(room_id)
@@ -244,12 +306,11 @@ class RoomManager:
         await self._broadcast(room_id, {
             "type": "ROOM_ACTIVE",
             "room_id": room_id,
-            "users": [uid for uid in room.users],
+            "users": list(room.users),
             "message": "4명 모두 입장! 대화를 시작하세요.",
         })
 
     async def _connection_timeout(self, room_id: str) -> None:
-        """60초 내 전원 미입장 시 매칭 무효."""
         await asyncio.sleep(MATCH_TIMEOUT_SECONDS)
 
         room = self.rooms.get(room_id)
@@ -259,7 +320,6 @@ class RoomManager:
         missing = [uid for uid, u in room.users.items() if not u.connected]
         logger.info(f"[룸:{room_id}] 연결 타임아웃 | 미입장: {missing}")
 
-        # 패널티 대상 유저 정보 포함
         await self._broadcast(room_id, {
             "type": "MATCH_FAILED",
             "reason": "connection_timeout",
@@ -267,7 +327,6 @@ class RoomManager:
             "message": "1분 내에 전원이 입장하지 않아 매칭이 취소되었습니다.",
         })
 
-        # 미입장 유저에게도 푸시 (패널티 안내)
         penalty_tokens = [room.users[uid].device_token for uid in missing]
         if penalty_tokens:
             asyncio.create_task(notify_match_failed(penalty_tokens))
@@ -275,7 +334,6 @@ class RoomManager:
         await self._destroy_room(room_id)
 
     async def _reconnect_grace(self, room_id: str, user_id: str) -> None:
-        """연결 끊김 후 RECONNECT_GRACE_SECONDS 동안 재접속 기다림."""
         await asyncio.sleep(RECONNECT_GRACE_SECONDS)
 
         room = self.rooms.get(room_id)
@@ -284,7 +342,7 @@ class RoomManager:
 
         user = room.users.get(user_id)
         if not user or user.connected:
-            return  # 유예 시간 내 재접속 성공
+            return
 
         logger.info(f"[룸:{room_id}] {user_id} 유예 초과 → 폭탄 트리거")
         await self._trigger_timebomb(room_id, user_id, reason="reconnect_timeout")
@@ -343,7 +401,9 @@ class RoomManager:
             "message": "모두 돌아왔습니다! 대화를 계속합니다.",
         })
 
-    async def _broadcast(self, room_id: str, message: dict, exclude: Optional[str] = None) -> None:
+    async def _broadcast(
+        self, room_id: str, message: dict, exclude: Optional[str] = None
+    ) -> None:
         room = self.rooms.get(room_id)
         if not room:
             return

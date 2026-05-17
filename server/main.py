@@ -209,11 +209,28 @@ async def websocket_endpoint(
                 if len(content) > MAX_CHAT_LENGTH:
                     await ws.send_json({"type": "ERROR", "code": "CONTENT_TOO_LONG"})
                     continue
-                await room_manager.relay_message(
+                ok = await room_manager.relay_message(
                     current_room_id,
                     user_id,
                     {"type": "CHAT", "content": content, "timestamp": data.get("timestamp")},
                 )
+                if not ok:
+                    await ws.send_json({"type": "ERROR", "code": "RATE_LIMITED"})
+
+            # ── 이모지 리액션 ─────────────────────────────────────────────────
+            elif msg_type == "REACT":
+                if not current_room_id:
+                    await ws.send_json({"type": "ERROR", "code": "NOT_IN_ROOM"})
+                    continue
+                message_id = (data.get("message_id") or "").strip()
+                emoji = (data.get("emoji") or "").strip()
+                if not message_id or not emoji:
+                    continue
+                ok = await room_manager.relay_react(
+                    current_room_id, user_id, message_id, emoji
+                )
+                if not ok:
+                    await ws.send_json({"type": "ERROR", "code": "INVALID_EMOJI"})
 
             # ── WebRTC 시그널링 ───────────────────────────────────────────────
             elif msg_type == "SIGNAL":

@@ -17,7 +17,7 @@ export default function MatchScreen() {
   const nav = useNavigation<Nav>();
   const {
     userId, locationKey, locationDisplay,
-    setLocation, queueStatus, setQueueStatus, queueSize, setQueueSize,
+    setLocation, queueStatus, setQueueStatus, queueSize, queueNeeded, setQueueSize,
     wsConnected,
   } = useStore();
 
@@ -130,7 +130,7 @@ export default function MatchScreen() {
             <>
               <Text style={styles.statusEmoji}>⏳</Text>
               <Text style={styles.statusTitle}>
-                {4 - Math.min(queueSize, 4)}명을 더 기다리는 중
+                {queueNeeded}명을 더 기다리는 중
               </Text>
               <View style={styles.dotsRow}>
                 {dotOpacity.map((opacity, i) => (
