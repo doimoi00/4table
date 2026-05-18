@@ -42,18 +42,22 @@ export default function App() {
       const id = await getOrCreateUserId();
       setUserId(id);
 
-      const token = await registerForPushNotifications();
+      // FCM 토큰 획득 실패(Google Play 미설치, 네트워크 문제 등)해도 WS 연결은 진행
+      let token = '';
+      try {
+        token = await registerForPushNotifications();
+      } catch {
+        // 알림 없이 계속 진행
+      }
       setDeviceToken(token);
 
       wsClient.setOnConnect(() => {
         setWsConnected(true);
         const { queueStatus, locationKey, pendingCancelQueue } = useStore.getState();
         if (pendingCancelQueue) {
-          // WS 미연결 중 취소했던 경우 → 재연결 후 서버에 전달
           wsClient.send({ type: 'CANCEL_QUEUE' });
           useStore.getState().setPendingCancelQueue(false);
         } else if (queueStatus === 'queued' && locationKey) {
-          // 재연결 시 큐에 있었으면 JOIN_QUEUE 재전송 → QUEUE_JOINED로 queueSize 갱신
           wsClient.send({ type: 'JOIN_QUEUE', location: locationKey });
         }
       });

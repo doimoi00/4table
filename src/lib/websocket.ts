@@ -13,6 +13,7 @@ class WSClient {
   private onDisconnectCb: StateHandler | null = null;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private connTimeoutId: ReturnType<typeof setTimeout> | null = null;
   private connected = false;
   private intentionalClose = false;
 
@@ -32,6 +33,7 @@ class WSClient {
     if (this.ws?.readyState === WebSocket.CONNECTING) return;
 
     this._cancelReconnect();
+    this._cancelConnTimeout();
 
     // 이전 WS 핸들러를 먼저 제거해 stale onclose 이벤트 차단
     const old = this.ws;
@@ -49,8 +51,27 @@ class WSClient {
     const ws = new WebSocket(url);
     this.ws = ws;
 
+    // Android에서 onclose가 발화하지 않는 경우를 대비한 연결 타임아웃
+    this.connTimeoutId = setTimeout(() => {
+      if (this.wsGen !== gen) return;
+      this._cancelConnTimeout();
+      ws.onopen = null;
+      ws.onmessage = null;
+      ws.onclose = null;
+      ws.onerror = null;
+      try { ws.close(); } catch { /* ignore */ }
+      if (this.ws === ws) this.ws = null;
+      this.connected = false;
+      this._stopPing();
+      this.onDisconnectCb?.();
+      if (!this.intentionalClose && this.userId) {
+        this.reconnectTimer = setTimeout(() => this._open(), 3000);
+      }
+    }, 10_000);
+
     ws.onopen = () => {
       if (this.wsGen !== gen) return;
+      this._cancelConnTimeout();
       this.connected = true;
       this._cancelReconnect();
       this._startPing();
@@ -69,6 +90,7 @@ class WSClient {
 
     ws.onclose = () => {
       if (this.wsGen !== gen) return;  // 구버전 WS 이벤트 무시
+      this._cancelConnTimeout();
       this.connected = false;
       this._stopPing();
       this.onDisconnectCb?.();
@@ -94,6 +116,7 @@ class WSClient {
     this.wsGen++;  // 모든 pending 이벤트 무효화
     this._stopPing();
     this._cancelReconnect();
+    this._cancelConnTimeout();
     const old = this.ws;
     this.ws = null;
     this.connected = false;
@@ -125,6 +148,10 @@ class WSClient {
 
   private _cancelReconnect() {
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+  }
+
+  private _cancelConnTimeout() {
+    if (this.connTimeoutId) { clearTimeout(this.connTimeoutId); this.connTimeoutId = null; }
   }
 }
 
