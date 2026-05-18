@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert, Animated, FlatList, Image, KeyboardAvoidingView, Modal, Platform,
-  StyleSheet, Text, TextInput, TouchableOpacity, View,
+  Share, StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library';
 import * as Haptics from 'expo-haptics';
@@ -31,7 +32,7 @@ function genMsgId(): string {
 }
 
 function UserDot({ userId, users, connectedUsers }: {
-  userId: string; users: string[]; connectedUsers: string[];
+  readonly userId: string; readonly users: string[]; readonly connectedUsers: string[];
 }) {
   const index = users.indexOf(userId);
   const color = USER_COLORS[index % USER_COLORS.length];
@@ -61,10 +62,13 @@ export default function ChatScreen() {
   const [fullscreenImage, setFullscreenImage] = useState<string | null>(null);
 
   const listRef = useRef<FlatList>(null);
+  const isMountedRef = useRef(true);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTypingTrueAt = useRef<number>(0);
   const prevMsgCount = useRef(0);
   const isNearBottomRef = useRef(true);
+  const isLeavingRef = useRef(false);
+  const handleLeaveRef = useRef<() => void>(() => {});
 
   const typingLabels = typingUsers
     .filter((uid) => uid !== userId)
@@ -94,22 +98,27 @@ export default function ChatScreen() {
   }, [typingLabels.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    isMountedRef.current = true;
     if (!roomId) {
       wsClient.send({ type: 'JOIN_ROOM', room_id: routeRoomId });
     }
-  }, []);
+    return () => {
+      isMountedRef.current = false;
+      if (typingTimer.current) clearTimeout(typingTimer.current);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 새 메시지 도착 시 스크롤 + 햅틱
   useEffect(() => {
     if (messages.length > prevMsgCount.current) {
-      const latest = messages[messages.length - 1];
-      if (!latest.isMine && latest.contentType !== 'system') {
+      const latest = messages.at(-1);
+      if (latest && !latest.isMine && latest.contentType !== 'system') {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
       if (isNearBottomRef.current) {
         setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
         setUnreadCount(0);
-      } else if (!latest.isMine && latest.contentType !== 'system') {
+      } else if (latest && !latest.isMine && latest.contentType !== 'system') {
         setUnreadCount((c) => c + (messages.length - prevMsgCount.current));
       }
     }
@@ -122,9 +131,19 @@ export default function ChatScreen() {
     }
   }, [queueStatus, nav]);
 
+  // 안드로이드 뒤로가기 버튼 가로채기
+  useEffect(() => {
+    const unsubscribe = nav.addListener('beforeRemove', (e) => {
+      if (isLeavingRef.current) return;
+      e.preventDefault();
+      handleLeaveRef.current();
+    });
+    return unsubscribe;
+  }, [nav]);
+
   function sendMessage() {
     const text = input.trim();
-    if (!text) return;
+    if (!text || !canChat) return;
     if (typingTimer.current) clearTimeout(typingTimer.current);
     wsClient.send({ type: 'TYPING', is_typing: false });
 
@@ -171,43 +190,51 @@ export default function ChatScreen() {
   }
 
   const sendImage = useCallback(async (fromCamera: boolean) => {
-    let result: ImagePicker.ImagePickerResult;
-    if (fromCamera) {
-      const perm = await ImagePicker.requestCameraPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert('권한 필요', '카메라 접근 권한이 필요합니다.');
-        return;
+    try {
+      let result: ImagePicker.ImagePickerResult;
+      if (fromCamera) {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!isMountedRef.current) return;
+        if (!perm.granted) {
+          Alert.alert('권한 필요', '카메라 접근 권한이 필요합니다.');
+          return;
+        }
+        result = await ImagePicker.launchCameraAsync({ base64: true, quality: 0.6 });
+      } else {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!isMountedRef.current) return;
+        if (!perm.granted) {
+          Alert.alert('권한 필요', '사진 접근 권한이 필요합니다.');
+          return;
+        }
+        result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ['images'] as any,
+          base64: true,
+          quality: 0.6,
+        });
       }
-      result = await ImagePicker.launchCameraAsync({ base64: true, quality: 0.6 });
-    } else {
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert('권한 필요', '사진 접근 권한이 필요합니다.');
-        return;
-      }
-      result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        base64: true,
-        quality: 0.6,
+      if (!isMountedRef.current) return;
+      if (result.canceled || !result.assets?.[0]?.base64) return;
+
+      const asset = result.assets[0];
+      const mimeType = asset.mimeType ?? 'image/jpeg';
+      const base64 = asset.base64!;
+      const msgId = `img-${genMsgId()}`;
+
+      webrtcManager.sendImageToAll(msgId, base64, mimeType);
+      addMessage({
+        id: msgId,
+        senderId: userId,
+        content: `data:${mimeType};base64,${base64}`,
+        contentType: 'image',
+        timestamp: new Date().toISOString(),
+        isMine: true,
+        reactions: {},
       });
+    } catch {
+      if (!isMountedRef.current) return;
+      Alert.alert('오류', '이미지 처리 중 문제가 발생했습니다.');
     }
-    if (result.canceled || !result.assets[0].base64) return;
-
-    const asset = result.assets[0];
-    const mimeType = asset.mimeType ?? 'image/jpeg';
-    const base64 = asset.base64!;
-    const msgId = `img-${genMsgId()}`;
-
-    webrtcManager.sendImageToAll(msgId, base64, mimeType);
-    addMessage({
-      id: msgId,
-      senderId: userId,
-      content: `data:${mimeType};base64,${base64}`,
-      contentType: 'image',
-      timestamp: new Date().toISOString(),
-      isMine: true,
-      reactions: {},
-    });
   }, [userId, addMessage]);
 
   const pickAndSendImage = useCallback(() => {
@@ -219,23 +246,37 @@ export default function ChatScreen() {
   }, [sendImage]);
 
   const saveImage = useCallback(async (uri: string) => {
-    const { status } = await MediaLibrary.requestPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('권한 필요', '사진 저장을 위해 미디어 접근 권한이 필요합니다.');
-      return;
-    }
     try {
-      await MediaLibrary.saveToLibraryAsync(uri);
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (!isMountedRef.current) return;
+      if (status !== 'granted') {
+        Alert.alert('권한 필요', '사진 저장을 위해 미디어 접근 권한이 필요합니다.');
+        return;
+      }
+      let fileUri = uri;
+      if (uri.startsWith('data:')) {
+        const match = /^data:([^;]+);base64,(.+)$/s.exec(uri);
+        if (!match) { Alert.alert('저장 실패', '이미지 형식이 올바르지 않습니다.'); return; }
+        const ext = match[1].split('/')[1] ?? 'jpg';
+        fileUri = `${FileSystem.cacheDirectory}4table_save_${Date.now()}.${ext}`;
+        await FileSystem.writeAsStringAsync(fileUri, match[2], { encoding: FileSystem.EncodingType.Base64 });
+      }
+      await MediaLibrary.saveToLibraryAsync(fileUri);
+      if (!isMountedRef.current) return;
       Alert.alert('저장 완료', '사진이 갤러리에 저장되었습니다.');
     } catch {
+      if (!isMountedRef.current) return;
       Alert.alert('저장 실패', '사진 저장 중 오류가 발생했습니다.');
     }
   }, []);
 
   function handleLeave() {
+    const isTimebomb = queueStatus === 'timebomb';
     Alert.alert(
       '나가기',
-      '나가면 5분 후 방이 종료됩니다. 나가시겠습니까?',
+      isTimebomb
+        ? '폭탄이 이미 시작된 상태입니다. 지금 나가면 방이 즉시 종료될 수 있습니다. 나가시겠습니까?'
+        : '나가면 5분 후 방이 종료됩니다. 나가시겠습니까?',
       [
         { text: '취소', style: 'cancel' },
         {
@@ -244,6 +285,7 @@ export default function ChatScreen() {
           onPress: () => {
             if (typingTimer.current) clearTimeout(typingTimer.current);
             wsClient.send({ type: 'LEAVE' });
+            isLeavingRef.current = true;
             resetRoom();
             nav.navigate('Match');
           },
@@ -251,6 +293,7 @@ export default function ChatScreen() {
       ]
     );
   }
+  handleLeaveRef.current = handleLeave;
 
   const getColor = (senderId: string) => {
     const idx = allUsers.indexOf(senderId);
@@ -280,7 +323,11 @@ export default function ChatScreen() {
         <MatchDeadlineBar endsAt={matchDeadlineEndsAt} />
       )}
       {queueStatus === 'timebomb' && timebombEndsAt && (
-        <TimeBombBar endsAt={timebombEndsAt} onExpire={() => {}} />
+        <TimeBombBar endsAt={timebombEndsAt} onExpire={() => {
+          resetRoom();
+          webrtcManager.cleanup();
+          nav.navigate('Match');
+        }} />
       )}
       {queueStatus === 'matched_waiting' && (
         <View style={styles.waitingOverlay}>
@@ -407,7 +454,11 @@ export default function ChatScreen() {
                         saveImage(item.content);
                       } else {
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                        setReactionTargetId(item.id);
+                        Alert.alert('메시지', undefined, [
+                          { text: '공유', onPress: () => Share.share({ message: item.content }) },
+                          { text: '리액션', onPress: () => setReactionTargetId(item.id) },
+                          { text: '취소', style: 'cancel' },
+                        ]);
                       }
                     }}
                   >
@@ -468,12 +519,12 @@ export default function ChatScreen() {
         {typingLabels.length > 0 && (
           <View style={styles.typingRow}>
             <View style={styles.typingDots}>
-              {dotAnims.map((anim, i) => (
+              {(['tdot-0', 'tdot-1', 'tdot-2'] as const).map((dotKey, i) => (
                 <Animated.View
-                  key={i}
+                  key={dotKey}
                   style={[styles.typingDot, {
-                    transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [0, -4] }) }],
-                    opacity: anim.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }),
+                    transform: [{ translateY: dotAnims[i].interpolate({ inputRange: [0, 1], outputRange: [0, -4] }) }],
+                    opacity: dotAnims[i].interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }),
                   }]}
                 />
               ))}

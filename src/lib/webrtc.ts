@@ -34,14 +34,14 @@ function getRNWebRTC() {
 
 class PeerConn {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private pc: any;
+  private readonly pc: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private dc: any = null;
-  private incomingChunks: Record<string, { chunks: string[]; total: number; mime: string }> = {};
+  private incomingChunks: Record<string, { chunks: string[]; total: number; mime: string; timer: ReturnType<typeof setTimeout> }> = {};
 
   constructor(
-    private peerId: string,
-    private onMedia: MediaReceivedHandler,
+    private readonly peerId: string,
+    private readonly onMedia: MediaReceivedHandler,
   ) {
     const lib = getRNWebRTC();
     if (!lib) return;
@@ -75,12 +75,17 @@ class PeerConn {
     try {
       const { id, index, total, mime, data } = JSON.parse(json);
       if (!this.incomingChunks[id]) {
-        this.incomingChunks[id] = { chunks: [], total, mime };
+        // 30초 내 완성되지 않은 청크는 메모리 누수 방지를 위해 자동 삭제
+        const timer = setTimeout(() => {
+          delete this.incomingChunks[id];
+        }, 30_000);
+        this.incomingChunks[id] = { chunks: [], total, mime, timer };
       }
       this.incomingChunks[id].chunks[index] = data;
       if (this.incomingChunks[id].chunks.filter(Boolean).length === total) {
         const base64 = this.incomingChunks[id].chunks.join('');
         const mimeType = this.incomingChunks[id].mime;
+        clearTimeout(this.incomingChunks[id].timer);
         delete this.incomingChunks[id];
         this.onMedia(this.peerId, base64, mimeType);
       }
@@ -129,7 +134,7 @@ class PeerConn {
   }
 
   sendBase64(id: string, base64: string, mimeType: string) {
-    if (!this.dc || this.dc.readyState !== 'open') return;
+    if (this.dc?.readyState !== 'open') return;
     const totalChunks = Math.ceil(base64.length / CHUNK_SIZE);
     for (let i = 0; i < totalChunks; i++) {
       const chunk = base64.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
@@ -138,13 +143,18 @@ class PeerConn {
   }
 
   close() {
+    // 미완성 청크 타이머 정리
+    for (const entry of Object.values(this.incomingChunks)) {
+      clearTimeout(entry.timer);
+    }
+    this.incomingChunks = {};
     try { this.dc?.close(); } catch { /* ignore */ }
     try { this.pc?.close(); } catch { /* ignore */ }
   }
 }
 
 class WebRTCManager {
-  private peers = new Map<string, PeerConn>();
+  private readonly peers = new Map<string, PeerConn>();
   private onMedia: MediaReceivedHandler | null = null;
 
   setMediaHandler(fn: MediaReceivedHandler) {

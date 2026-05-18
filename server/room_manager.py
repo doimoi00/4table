@@ -90,7 +90,7 @@ class RoomManager:
         if room.status == RoomStatus.DESTROYED:
             await ws.send_json({"type": "ERROR", "code": "ROOM_DESTROYED", "room_id": room_id})
             return False
-        if user_id not in room.users:
+        if user_id not in room.users or self.user_room_map.get(user_id) != room_id:
             await ws.send_json({"type": "ERROR", "code": "NOT_IN_ROOM"})
             return False
 
@@ -197,13 +197,13 @@ class RoomManager:
 
     async def relay_react(
         self, room_id: str, sender_id: str, message_id: str, emoji: str
-    ) -> bool:
-        """이모지 리액션을 중계하고 히스토리에도 반영합니다."""
+    ) -> tuple[bool, str]:
+        """이모지 리액션을 중계하고 히스토리에도 반영합니다. (ok, error_code) 반환."""
         if emoji not in VALID_EMOJIS:
-            return False
+            return False, "INVALID_EMOJI"
         room = self.rooms.get(room_id)
         if not room or room.status not in (RoomStatus.ACTIVE, RoomStatus.TIMEBOMB):
-            return False
+            return False, "ROOM_NOT_ACTIVE"
 
         # 히스토리의 해당 메시지에 리액션 반영 (토글)
         for msg in room.message_history:
@@ -222,7 +222,7 @@ class RoomManager:
             "sender_id": sender_id,
             "emoji": emoji,
         })
-        return True
+        return True, ""
 
     async def relay_typing(self, room_id: str, user_id: str, is_typing: bool) -> None:
         """타이핑 상태를 나머지 멤버에게 중계."""
@@ -280,15 +280,23 @@ class RoomManager:
             user.connected = False
             user.ws = None
 
+        # 명시적 퇴장은 재접속을 허용하지 않으므로 user_room_map에서 제거.
+        # 제거하지 않으면 WS 재접속 시 auto-rejoin으로 TIMEBOMB 해제 버그 발생.
+        self.user_room_map.pop(user_id, None)
+
         logger.info(f"[룸:{room_id}] {user_id} 명시적 퇴장 → 즉시 폭탄")
 
-        if room.status == RoomStatus.ACTIVE:
+        if room.status in (RoomStatus.ACTIVE, RoomStatus.TIMEBOMB):
             await self._trigger_timebomb(room_id, user_id, reason="explicit_leave")
 
     # ─── 유틸 ────────────────────────────────────────────────────────────────
 
     def get_user_room(self, user_id: str) -> Optional[str]:
         return self.user_room_map.get(user_id)
+
+    def is_room_member(self, room_id: str, user_id: str) -> bool:
+        room = self.rooms.get(room_id)
+        return room is not None and user_id in room.users
 
     # ─── Private ─────────────────────────────────────────────────────────────
 
@@ -318,6 +326,7 @@ class RoomManager:
 
         room.status = RoomStatus.ACTIVE
         room.activated_at = datetime.utcnow()
+        room.timebomb_started_at = None  # 이전 timebomb 잔재 초기화
         logger.info(f"[룸:{room_id}] ACTIVE — 채팅 시작")
 
         await self._broadcast(room_id, {
@@ -410,6 +419,7 @@ class RoomManager:
             room.timebomb_task = None
 
         room.status = RoomStatus.ACTIVE
+        room.timebomb_started_at = None  # 폭탄 해제 시 시작 시각 초기화
         logger.info(f"[룸:{room_id}] 폭탄 해제 — 전원 재접속")
 
         await self._broadcast(room_id, {

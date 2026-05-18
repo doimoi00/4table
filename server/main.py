@@ -231,16 +231,20 @@ async def websocket_endpoint(
                 emoji = (data.get("emoji") or "").strip()
                 if not message_id or not emoji:
                     continue
-                ok = await room_manager.relay_react(
+                ok, err_code = await room_manager.relay_react(
                     current_room_id, user_id, message_id, emoji
                 )
                 if not ok:
-                    await ws.send_json({"type": "ERROR", "code": "INVALID_EMOJI"})
+                    await ws.send_json({"type": "ERROR", "code": err_code})
 
             # ── WebRTC 시그널링 ───────────────────────────────────────────────
             elif msg_type == "SIGNAL":
                 if not current_room_id:
                     await ws.send_json({"type": "ERROR", "code": "NOT_IN_ROOM"})
+                    continue
+                target_uid = (data.get("target_user_id") or "").strip()
+                if not room_manager.is_room_member(current_room_id, target_uid):
+                    await ws.send_json({"type": "ERROR", "code": "INVALID_TARGET"})
                     continue
                 await room_manager.relay_message(
                     current_room_id,
@@ -248,7 +252,7 @@ async def websocket_endpoint(
                     {
                         "type": "SIGNAL",
                         "signal_type": data.get("signal_type"),
-                        "target_user_id": data.get("target_user_id"),
+                        "target_user_id": target_uid,
                         "payload": data.get("payload"),
                     },
                 )

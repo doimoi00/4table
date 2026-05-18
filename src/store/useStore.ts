@@ -40,6 +40,7 @@ type State = {
   timebombEndsAt: number | null;
   matchDeadlineEndsAt: number | null;
   wsConnected: boolean;
+  pendingCancelQueue: boolean;
 };
 
 type Actions = {
@@ -60,6 +61,7 @@ type Actions = {
   cancelTimebomb: () => void;
   startMatchDeadline: (seconds: number) => void;
   setWsConnected: (connected: boolean) => void;
+  setPendingCancelQueue: (v: boolean) => void;
   resetRoom: () => void;
 };
 
@@ -80,6 +82,7 @@ export const useStore = create<State & Actions>((set) => ({
   timebombEndsAt: null,
   matchDeadlineEndsAt: null,
   wsConnected: false,
+  pendingCancelQueue: false,
 
   setUserId: (id) => set({ userId: id }),
   setDeviceToken: (token) => set({ deviceToken: token }),
@@ -107,6 +110,7 @@ export const useStore = create<State & Actions>((set) => ({
   startMatchDeadline: (seconds) =>
     set({ matchDeadlineEndsAt: Date.now() + seconds * 1000 }),
   setWsConnected: (connected) => set({ wsConnected: connected }),
+  setPendingCancelQueue: (v) => set({ pendingCancelQueue: v }),
   resetRoom: () =>
     set({
       queueStatus: 'idle',

@@ -1,24 +1,27 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Animated, StyleSheet, Text, TouchableOpacity } from 'react-native';
 import { wsClient } from '../lib/websocket';
 
 type Props = {
-  visible: boolean;
+  readonly visible: boolean;
 };
 
 export function ConnectionBanner({ visible }: Props) {
   const slideAnim = useRef(new Animated.Value(-40)).current;
+  const [rendered, setRendered] = useState(visible);
 
   useEffect(() => {
-    Animated.spring(slideAnim, {
-      toValue: visible ? 0 : -40,
-      useNativeDriver: true,
-      tension: 80,
-      friction: 10,
-    }).start();
+    if (visible) {
+      setRendered(true);
+      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 80, friction: 10 }).start();
+    } else {
+      Animated.spring(slideAnim, { toValue: -40, useNativeDriver: true, tension: 80, friction: 10 }).start(
+        ({ finished }) => { if (finished) setRendered(false); }
+      );
+    }
   }, [visible, slideAnim]);
 
-  if (!visible) return null;
+  if (!rendered) return null;
 
   return (
     <Animated.View style={[styles.banner, { transform: [{ translateY: slideAnim }] }]}>

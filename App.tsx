@@ -47,9 +47,13 @@ export default function App() {
 
       wsClient.setOnConnect(() => {
         setWsConnected(true);
-        // 재연결 시 큐에 있었으면 JOIN_QUEUE 재전송 → 서버에서 QUEUE_JOINED로 queueSize 갱신
-        const { queueStatus, locationKey } = useStore.getState();
-        if (queueStatus === 'queued' && locationKey) {
+        const { queueStatus, locationKey, pendingCancelQueue } = useStore.getState();
+        if (pendingCancelQueue) {
+          // WS 미연결 중 취소했던 경우 → 재연결 후 서버에 전달
+          wsClient.send({ type: 'CANCEL_QUEUE' });
+          useStore.getState().setPendingCancelQueue(false);
+        } else if (queueStatus === 'queued' && locationKey) {
+          // 재연결 시 큐에 있었으면 JOIN_QUEUE 재전송 → QUEUE_JOINED로 queueSize 갱신
           wsClient.send({ type: 'JOIN_QUEUE', location: locationKey });
         }
       });

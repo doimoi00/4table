@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # FCM 설정 (Firebase Cloud Messaging)
-FCM_SERVER_KEY = os.getenv("FCM_SERVER_KEY", "")
 FCM_PROJECT_ID = os.getenv("FCM_PROJECT_ID", "")
 FCM_SERVICE_ACCOUNT_FILE = os.getenv("FCM_SERVICE_ACCOUNT_FILE", "serviceAccount.json")
 

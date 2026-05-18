@@ -25,7 +25,7 @@ async def _get_access_token(service_account_file: str) -> str:
     global _access_token_cache, _token_expiry
 
     if _access_token_cache and time.time() < _token_expiry:
-        return _access_token_cache
+        return _access_token_cache  # type: ignore[return-value]  # guarded by truthiness check above
 
     try:
         import google.auth.transport.requests
@@ -39,7 +39,7 @@ async def _get_access_token(service_account_file: str) -> str:
         creds.refresh(request)
         _access_token_cache = creds.token
         _token_expiry = time.time() + 3500  # 약 58분 후 갱신
-        return _access_token_cache
+        return _access_token_cache or ""
     except Exception as e:
         logger.error(f"FCM 토큰 발급 실패: {e}")
         raise

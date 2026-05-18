@@ -3,11 +3,11 @@ import { Animated, StyleSheet, Text, View } from 'react-native';
 import { MATCH_TIMEOUT_SECONDS } from '../constants/config';
 
 type Props = {
-  endsAt: number;
+  readonly endsAt: number;
 };
 
 export function MatchDeadlineBar({ endsAt }: Props) {
-  const [remaining, setRemaining] = useState(Math.ceil((endsAt - Date.now()) / 1000));
+  const [remaining, setRemaining] = useState(Math.max(0, Math.ceil((endsAt - Date.now()) / 1000)));
   const progress = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {

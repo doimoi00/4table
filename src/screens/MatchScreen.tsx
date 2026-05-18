@@ -19,7 +19,7 @@ export default function MatchScreen() {
   const {
     userId, locationKey, locationDisplay,
     setLocation, queueStatus, setQueueStatus, queueSize, queueNeeded, setQueueSize,
-    wsConnected,
+    wsConnected, setPendingCancelQueue,
   } = useStore();
 
   const [locLoading, setLocLoading] = useState(false);
@@ -59,11 +59,11 @@ export default function MatchScreen() {
     return () => { if (waitTimerRef.current) { clearInterval(waitTimerRef.current); waitTimerRef.current = null; } };
   }, [queueStatus]);
 
-  const dotOpacity = [
-    useRef(new Animated.Value(0.3)).current,
-    useRef(new Animated.Value(0.3)).current,
-    useRef(new Animated.Value(0.3)).current,
-  ];
+  const dotOpacity = useRef([
+    new Animated.Value(0.3),
+    new Animated.Value(0.3),
+    new Animated.Value(0.3),
+  ]).current;
 
   // 대기 중 점 애니메이션
   useEffect(() => {
@@ -116,7 +116,7 @@ export default function MatchScreen() {
   // 최초 진입 시 위치 감지
   useEffect(() => {
     if (!locationKey) detectLocation();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function startMatching() {
     if (!locationKey || !userId) return;
@@ -130,7 +130,11 @@ export default function MatchScreen() {
   }
 
   function cancelMatching() {
-    wsClient.send({ type: 'CANCEL_QUEUE' });
+    if (!wsConnected) {
+      setPendingCancelQueue(true);
+    } else {
+      wsClient.send({ type: 'CANCEL_QUEUE' });
+    }
     setQueueStatus('idle');
     setQueueSize(0);
   }
@@ -164,7 +168,7 @@ export default function MatchScreen() {
                   ? `${locationDisplay} 사람들과 익명으로 대화해보세요`
                   : '위치를 먼저 설정해주세요'}
               </Text>
-              {locationDisplay && areaCount !== null && (
+              {!!locationDisplay && areaCount !== null && (
                 <View style={styles.areaCountChip}>
                   <Text style={styles.areaCountText}>
                     {areaCount === 0
@@ -183,8 +187,8 @@ export default function MatchScreen() {
                 {queueNeeded > 0 ? `${queueNeeded}명을 더 기다리는 중` : '매칭 준비 중...'}
               </Text>
               <View style={styles.dotsRow}>
-                {dotOpacity.map((opacity, i) => (
-                  <Animated.View key={`queue-dot-${i}`} style={[styles.dot, { opacity }]} />
+                {(['dot-0', 'dot-1', 'dot-2'] as const).map((dotKey, i) => (
+                  <Animated.View key={dotKey} style={[styles.dot, { opacity: dotOpacity[i] }]} />
                 ))}
               </View>
               <Text style={styles.statusSub}>앱을 꺼도 대기는 유지됩니다</Text>
@@ -214,7 +218,7 @@ export default function MatchScreen() {
             disabled={!locationKey || !wsConnected}
           >
             <Text style={styles.btnText}>
-              {!wsConnected ? '서버 연결 중...' : '매칭 시작'}
+              {wsConnected ? '매칭 시작' : '서버 연결 중...'}
             </Text>
           </TouchableOpacity>
         )}

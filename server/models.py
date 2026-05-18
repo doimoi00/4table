@@ -28,8 +28,8 @@ class RoomUser:
     ws: Optional[Any] = None
     connected: bool = False
     disconnected_at: Optional[datetime] = None
-    # 채팅 도배 방지: 최근 메시지 발송 타임스탬프 (최대 5개)
-    chat_timestamps: Deque[float] = field(default_factory=lambda: deque(maxlen=5))
+    # 채팅 도배 방지: 최근 메시지 발송 타임스탬프 (CHAT_RATE_LIMIT 크기)
+    chat_timestamps: Deque[float] = field(default_factory=lambda: deque(maxlen=3))
 
 
 @dataclass

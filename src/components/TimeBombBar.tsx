@@ -3,12 +3,12 @@ import { Animated, StyleSheet, Text, View } from 'react-native';
 import { TIMEBOMB_SECONDS } from '../constants/config';
 
 type Props = {
-  endsAt: number; // Date.now() timestamp
-  onExpire: () => void;
+  readonly endsAt: number; // Date.now() timestamp
+  readonly onExpire: () => void;
 };
 
 export function TimeBombBar({ endsAt, onExpire }: Props) {
-  const [remaining, setRemaining] = useState(Math.ceil((endsAt - Date.now()) / 1000));
+  const [remaining, setRemaining] = useState(Math.max(0, Math.ceil((endsAt - Date.now()) / 1000)));
   const progress = useRef(new Animated.Value(1)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
@@ -34,8 +34,9 @@ export function TimeBombBar({ endsAt, onExpire }: Props) {
   }, [remaining, progress]);
 
   // 깜빡임 (30초 이하)
+  const isCritical = remaining <= 30;
   useEffect(() => {
-    if (remaining > 30) return;
+    if (!isCritical) return;
     const pulse = Animated.loop(
       Animated.sequence([
         Animated.timing(pulseAnim, { toValue: 0.4, duration: 400, useNativeDriver: true }),
@@ -44,7 +45,7 @@ export function TimeBombBar({ endsAt, onExpire }: Props) {
     );
     pulse.start();
     return () => pulse.stop();
-  }, [remaining <= 30, pulseAnim]);
+  }, [isCritical, pulseAnim]);
 
   const mins = Math.floor(remaining / 60);
   const secs = remaining % 60;
