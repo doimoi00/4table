@@ -9,6 +9,7 @@ import { useStore } from '../store/useStore';
 import { wsClient } from '../lib/websocket';
 import { requestLocationAndGetDistrict } from '../lib/location';
 import { ConnectionBanner } from '../components/ConnectionBanner';
+import { API_URL } from '../constants/config';
 import type { RootStackParamList } from '../../App';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Match'>;
@@ -22,6 +23,42 @@ export default function MatchScreen() {
   } = useStore();
 
   const [locLoading, setLocLoading] = useState(false);
+  const [areaCount, setAreaCount] = useState<number | null>(null);
+  const [waitSeconds, setWaitSeconds] = useState(0);
+  const waitTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isMountedRef = useRef(true);
+  useEffect(() => { return () => { isMountedRef.current = false; }; }, []);
+
+  // 지역 대기 현황 (30초마다 갱신)
+  useEffect(() => {
+    if (!locationKey) { setAreaCount(null); return; }
+    const fetch_ = async () => {
+      try {
+        const res = await fetch(`${API_URL}/stats`);
+        if (!res.ok) return;
+        const data = await res.json() as { queue_by_location: Record<string, number> };
+        if (isMountedRef.current) setAreaCount(data.queue_by_location?.[locationKey] ?? 0);
+      } catch { /* 서버 미연결 시 무시 */ }
+    };
+    fetch_();
+    const id = setInterval(fetch_, 30_000);
+    return () => clearInterval(id);
+  }, [locationKey]);
+
+  // 큐 대기 타이머
+  useEffect(() => {
+    if (queueStatus === 'queued') {
+      setWaitSeconds(0);
+      waitTimerRef.current = setInterval(() => {
+        if (isMountedRef.current) setWaitSeconds((s) => s + 1);
+      }, 1000);
+    } else {
+      if (waitTimerRef.current) { clearInterval(waitTimerRef.current); waitTimerRef.current = null; }
+      setWaitSeconds(0);
+    }
+    return () => { if (waitTimerRef.current) { clearInterval(waitTimerRef.current); waitTimerRef.current = null; } };
+  }, [queueStatus]);
+
   const dotOpacity = [
     useRef(new Animated.Value(0.3)).current,
     useRef(new Animated.Value(0.3)).current,
@@ -72,7 +109,7 @@ export default function MatchScreen() {
         );
       }
     } finally {
-      setLocLoading(false);
+      if (isMountedRef.current) setLocLoading(false);
     }
   }, [setLocation]);
 
@@ -83,6 +120,10 @@ export default function MatchScreen() {
 
   function startMatching() {
     if (!locationKey || !userId) return;
+    if (!wsConnected) {
+      Alert.alert('연결 안 됨', '서버에 연결되지 않았습니다. 잠시 후 다시 시도해주세요.');
+      return;
+    }
     wsClient.send({ type: 'JOIN_QUEUE', location: locationKey });
     setQueueStatus('queued');
     setQueueSize(0);
@@ -123,6 +164,15 @@ export default function MatchScreen() {
                   ? `${locationDisplay} 사람들과 익명으로 대화해보세요`
                   : '위치를 먼저 설정해주세요'}
               </Text>
+              {locationDisplay && areaCount !== null && (
+                <View style={styles.areaCountChip}>
+                  <Text style={styles.areaCountText}>
+                    {areaCount === 0
+                      ? '현재 대기 중인 사람이 없어요'
+                      : `지금 ${areaCount}명이 대기 중이에요`}
+                  </Text>
+                </View>
+              )}
             </>
           )}
 
@@ -130,15 +180,20 @@ export default function MatchScreen() {
             <>
               <Text style={styles.statusEmoji}>⏳</Text>
               <Text style={styles.statusTitle}>
-                {queueNeeded}명을 더 기다리는 중
+                {queueNeeded > 0 ? `${queueNeeded}명을 더 기다리는 중` : '매칭 준비 중...'}
               </Text>
               <View style={styles.dotsRow}>
                 {dotOpacity.map((opacity, i) => (
-                  <Animated.View key={`dot-${i}`} style={[styles.dot, { opacity }]} />
+                  <Animated.View key={`queue-dot-${i}`} style={[styles.dot, { opacity }]} />
                 ))}
               </View>
               <Text style={styles.statusSub}>앱을 꺼도 대기는 유지됩니다</Text>
               <Text style={styles.queueInfo}>{locationDisplay} · 현재 {queueSize}명 대기 중</Text>
+              <Text style={styles.waitTimer}>
+                {waitSeconds < 60
+                  ? `${waitSeconds}초 대기 중`
+                  : `${Math.floor(waitSeconds / 60)}분 ${waitSeconds % 60}초 대기 중`}
+              </Text>
             </>
           )}
 
@@ -154,11 +209,13 @@ export default function MatchScreen() {
         {/* 버튼 */}
         {queueStatus === 'idle' && (
           <TouchableOpacity
-            style={[styles.btn, !locationKey && styles.btnDisabled]}
+            style={[styles.btn, (!locationKey || !wsConnected) && styles.btnDisabled]}
             onPress={startMatching}
-            disabled={!locationKey}
+            disabled={!locationKey || !wsConnected}
           >
-            <Text style={styles.btnText}>매칭 시작</Text>
+            <Text style={styles.btnText}>
+              {!wsConnected ? '서버 연결 중...' : '매칭 시작'}
+            </Text>
           </TouchableOpacity>
         )}
 
@@ -208,6 +265,12 @@ const styles = StyleSheet.create({
   statusTitle: { fontSize: 22, fontWeight: '700', color: '#F9FAFB', textAlign: 'center', marginBottom: 8 },
   statusSub: { fontSize: 14, color: '#6B7280', textAlign: 'center', lineHeight: 22 },
   queueInfo: { fontSize: 12, color: '#4B5563', marginTop: 12 },
+  waitTimer: { fontSize: 11, color: '#7C3AED', marginTop: 6, fontVariant: ['tabular-nums'] },
+  areaCountChip: {
+    marginTop: 16, backgroundColor: '#1F2937',
+    borderRadius: 12, paddingHorizontal: 14, paddingVertical: 6,
+  },
+  areaCountText: { fontSize: 12, color: '#9CA3AF' },
 
   dotsRow: { flexDirection: 'row', gap: 8, marginVertical: 16 },
   dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#7C3AED' },

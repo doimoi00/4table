@@ -9,8 +9,19 @@ export type ChatMessage = {
   contentType: 'text' | 'image' | 'system';
   timestamp: string;
   isMine: boolean;
-  reactions: Record<string, string[]>; // emoji -> [userIds]
+  reactions: Record<string, string[]>;
 };
+
+// addReaction 헬퍼 — 중첩 깊이 감소를 위해 외부로 추출
+function toggleReaction(m: ChatMessage, messageId: string, emoji: string, userId: string): ChatMessage {
+  if (m.id !== messageId) return m;
+  const existing = m.reactions[emoji] ?? [];
+  const updated = existing.includes(userId)
+    ? existing.filter((id) => id !== userId)
+    : [...existing, userId];
+  return { ...m, reactions: { ...m.reactions, [emoji]: updated } };
+}
+
 
 type State = {
   userId: string;
@@ -80,28 +91,15 @@ export const useStore = create<State & Actions>((set) => ({
   setAllUsers: (users) => set({ allUsers: users }),
   setConnectedUsers: (users) => set({ connectedUsers: users }),
   setTypingUser: (userId, isTyping) =>
-    set((s) => ({
-      typingUsers: isTyping
-        ? s.typingUsers.includes(userId) ? s.typingUsers : [...s.typingUsers, userId]
-        : s.typingUsers.filter((id) => id !== userId),
-    })),
+    set((s) => {
+      if (!isTyping) return { typingUsers: s.typingUsers.filter((id) => id !== userId) };
+      if (s.typingUsers.includes(userId)) return { typingUsers: s.typingUsers };
+      return { typingUsers: [...s.typingUsers, userId] };
+    }),
   addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
   setMessages: (msgs) => set({ messages: msgs }),
   addReaction: (messageId, emoji, userId) =>
-    set((s) => ({
-      messages: s.messages.map((m) => {
-        if (m.id !== messageId) return m;
-        const existing = m.reactions[emoji] ?? [];
-        // 토글: 이미 반응했으면 제거, 아니면 추가
-        const updated = existing.includes(userId)
-          ? existing.filter((id) => id !== userId)
-          : [...existing, userId];
-        return {
-          ...m,
-          reactions: { ...m.reactions, [emoji]: updated },
-        };
-      }),
-    })),
+    set((s) => ({ messages: s.messages.map((m) => toggleReaction(m, messageId, emoji, userId)) })),
   startTimebomb: (seconds) =>
     set({ timebombSeconds: seconds, timebombEndsAt: Date.now() + seconds * 1000, queueStatus: 'timebomb' }),
   cancelTimebomb: () =>

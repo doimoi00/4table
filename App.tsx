@@ -26,6 +26,7 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export default function App() {
   const navRef = useRef<NavigationContainerRef<RootStackParamList>>(null);
+  const webrtcInitializedRef = useRef(false);
   const {
     setUserId, setDeviceToken, userId,
     setQueueStatus, setQueueSize, setQueueNeeded, setRoomId,
@@ -44,10 +45,17 @@ export default function App() {
       const token = await registerForPushNotifications();
       setDeviceToken(token);
 
-      wsClient.setOnConnect(() => setWsConnected(true));
+      wsClient.setOnConnect(() => {
+        setWsConnected(true);
+        // 재연결 시 큐에 있었으면 JOIN_QUEUE 재전송 → 서버에서 QUEUE_JOINED로 queueSize 갱신
+        const { queueStatus, locationKey } = useStore.getState();
+        if (queueStatus === 'queued' && locationKey) {
+          wsClient.send({ type: 'JOIN_QUEUE', location: locationKey });
+        }
+      });
       wsClient.setOnDisconnect(() => setWsConnected(false));
       wsClient.connect(id, token);
-    })();
+    })().catch(() => {});
   }, []);
 
   // ── AppState: 백→포그라운드 시 WS 재연결 ───────────────────────────────
@@ -102,17 +110,63 @@ export default function App() {
 
     if (msg.status === 'ACTIVE') {
       setQueueStatus('active');
-      if (myId && allUsers.length > 0) {
+      if (myId && allUsers.length > 0 && !webrtcInitializedRef.current) {
         webrtcManager.cleanup();
         webrtcManager.initRoom(allUsers, myId);
+        webrtcInitializedRef.current = true;
       }
     } else if (msg.status === 'TIMEBOMB') {
       setQueueStatus('timebomb');
       startTimebomb((msg.timebomb_remaining_seconds as number) ?? 300);
+      // TIMEBOMB 재입장 시에도 WebRTC 초기화 (이전 연결 정리 후 재시도)
+      if (myId && allUsers.length > 0 && !webrtcInitializedRef.current) {
+        webrtcManager.cleanup();
+        webrtcManager.initRoom(allUsers, myId);
+        webrtcInitializedRef.current = true;
+      }
     } else {
       setQueueStatus('matched_waiting');
     }
-  }, [setAllUsers, setConnectedUsers, setRoomId, setQueueStatus, setMessages, startTimebomb, addMessage]);
+  }, [setAllUsers, setConnectedUsers, setRoomId, setQueueStatus, setMessages, startTimebomb]);
+
+  // ── USER_CONNECTED/DISCONNECTED 처리 ────────────────────────────────────
+  const handleUserConnectionChange = useCallback((type: string, msg: Record<string, unknown>) => {
+    const connected = (msg.connected_users as string[]) ?? [];
+    setConnectedUsers(connected);
+    const eventUid = msg.user_id as string;
+    const { allUsers: currentUsers } = useStore.getState();
+    const uidIdx = currentUsers.indexOf(eventUid);
+    const uidLabel = uidIdx >= 0 ? `#${uidIdx + 1}` : '?';
+    addMessage({
+      id: `sys-${type}-${Date.now()}`,
+      senderId: '',
+      content: type === 'USER_CONNECTED' ? `${uidLabel} 재접속 ✓` : `${uidLabel} 연결 끊김`,
+      contentType: 'system',
+      timestamp: new Date().toISOString(),
+      isMine: false,
+      reactions: {},
+    });
+  }, [setConnectedUsers, addMessage]);
+
+  // ── TIMEBOMB_TRIGGERED 처리 ───────────────────────────────────────────────
+  const handleTimebombTriggered = useCallback((msg: Record<string, unknown>) => {
+    const bombSecs = (msg.countdown_seconds as number) ?? 300;
+    startTimebomb(bombSecs);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    const triggerUid = msg.trigger_user_id as string;
+    const { allUsers: bombUsers } = useStore.getState();
+    const triggerIdx = bombUsers.indexOf(triggerUid);
+    const triggerLabel = triggerIdx >= 0 ? `#${triggerIdx + 1}` : '?';
+    addMessage({
+      id: `sys-bomb-${Date.now()}`,
+      senderId: '',
+      content: `⏰ ${triggerLabel}이 나갔습니다. ${bombSecs}초 후 방 종료`,
+      contentType: 'system',
+      timestamp: new Date().toISOString(),
+      isMine: false,
+      reactions: {},
+    });
+  }, [startTimebomb, addMessage]);
 
   // ── WS 메시지 핸들러 ────────────────────────────────────────────────────
   const handleWsMessage = useCallback((msg: Record<string, unknown>) => {
@@ -162,6 +216,7 @@ export default function App() {
         if (myId && users.length > 0) {
           webrtcManager.cleanup();
           webrtcManager.initRoom(users, myId);
+          webrtcInitializedRef.current = true;
         }
         addMessage({
           id: `sys-active-${Date.now()}`,
@@ -176,24 +231,9 @@ export default function App() {
       }
 
       case 'USER_CONNECTED':
-      case 'USER_DISCONNECTED': {
-        const connected = (msg.connected_users as string[]) ?? [];
-        setConnectedUsers(connected);
-        const eventUid = msg.user_id as string;
-        const { allUsers: currentUsers } = useStore.getState();
-        const uidIdx = currentUsers.indexOf(eventUid);
-        const uidLabel = uidIdx >= 0 ? `#${uidIdx + 1}` : '?';
-        addMessage({
-          id: `sys-${type}-${Date.now()}`,
-          senderId: '',
-          content: type === 'USER_CONNECTED' ? `${uidLabel} 재접속 ✓` : `${uidLabel} 연결 끊김`,
-          contentType: 'system',
-          timestamp: new Date().toISOString(),
-          isMine: false,
-          reactions: {},
-        });
+      case 'USER_DISCONNECTED':
+        handleUserConnectionChange(type, msg);
         break;
-      }
 
       case 'TYPING': {
         setTypingUser(msg.user_id as string, msg.is_typing as boolean);
@@ -220,6 +260,7 @@ export default function App() {
       case 'MATCH_FAILED':
         resetRoom();
         webrtcManager.cleanup();
+        webrtcInitializedRef.current = false;
         if (navRef.current?.getCurrentRoute()?.name === 'Chat') {
           navRef.current.navigate('Match');
         }
@@ -227,13 +268,13 @@ export default function App() {
 
       case 'CHAT':
         addMessage({
-          id: `${Date.now()}-${(msg.sender_id as string).slice(0, 4)}`,
+          id: (msg.msg_id as string) || `${Date.now()}-${(msg.sender_id as string).slice(0, 4)}`,
           senderId: msg.sender_id as string,
           content: msg.content as string,
           contentType: 'text',
           timestamp: (msg.timestamp as string) ?? new Date().toISOString(),
           isMine: false,
-          reactions: {},
+          reactions: (msg.reactions as Record<string, string[]>) ?? {},
         });
         break;
 
@@ -241,25 +282,9 @@ export default function App() {
         webrtcManager.handleSignal(msg);
         break;
 
-      case 'TIMEBOMB_TRIGGERED': {
-        const bombSecs = (msg.countdown_seconds as number) ?? 300;
-        startTimebomb(bombSecs);
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-        const triggerUid = msg.trigger_user_id as string;
-        const { allUsers: bombUsers } = useStore.getState();
-        const triggerIdx = bombUsers.indexOf(triggerUid);
-        const triggerLabel = triggerIdx >= 0 ? `#${triggerIdx + 1}` : '?';
-        addMessage({
-          id: `sys-bomb-${Date.now()}`,
-          senderId: '',
-          content: `⏰ ${triggerLabel}이 나갔습니다. ${bombSecs}초 후 방 종료`,
-          contentType: 'system',
-          timestamp: new Date().toISOString(),
-          isMine: false,
-          reactions: {},
-        });
+      case 'TIMEBOMB_TRIGGERED':
+        handleTimebombTriggered(msg);
         break;
-      }
 
       case 'TIMEBOMB_CANCELLED':
         cancelTimebomb();
@@ -278,6 +303,7 @@ export default function App() {
       case 'ROOM_DESTROYED':
         resetRoom();
         webrtcManager.cleanup();
+        webrtcInitializedRef.current = false;
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         if (navRef.current?.isReady()) {
           navRef.current.navigate('Match');
@@ -290,6 +316,7 @@ export default function App() {
     setAllUsers, setConnectedUsers, setTypingUser,
     startTimebomb, cancelTimebomb,
     resetRoom, startMatchDeadline, handleRoomJoined,
+    handleUserConnectionChange, handleTimebombTriggered,
   ]);
 
   useEffect(() => {
