@@ -3,6 +3,8 @@ import { WS_URL } from '../constants/config';
 type MessageHandler = (msg: Record<string, unknown>) => void;
 type StateHandler = () => void;
 
+const LOG = (msg: string) => console.log(`[WSClient] ${msg}`);
+
 class WSClient {
   private ws: WebSocket | null = null;
   private wsGen = 0;  // 세대 카운터 — 구버전 WS 이벤트 무시
@@ -25,12 +27,18 @@ class WSClient {
     this.userId = userId;
     this.deviceToken = deviceToken;
     this.intentionalClose = false;
+    LOG(`connect() called. userId=${userId.slice(0, 8)}...`);
     this._open();
   }
 
   private _open() {
-    // 이미 연결 시도 중이면 중복 시작 방지
-    if (this.ws?.readyState === WebSocket.CONNECTING) return;
+    const curState = this.ws?.readyState ?? -1;
+    LOG(`_open() called. current WS readyState=${curState} wsGen=${this.wsGen}`);
+
+    if (this.ws?.readyState === WebSocket.CONNECTING) {
+      LOG('_open() → SKIP: already CONNECTING');
+      return;
+    }
 
     this._cancelReconnect();
     this._cancelConnTimeout();
@@ -39,6 +47,7 @@ class WSClient {
     const old = this.ws;
     this.ws = null;
     if (old) {
+      LOG(`_open() → closing old WS (readyState=${old.readyState})`);
       old.onopen = null;
       old.onmessage = null;
       old.onclose = null;
@@ -47,6 +56,7 @@ class WSClient {
     }
 
     const gen = ++this.wsGen;
+    LOG(`_open() → new WS gen=${gen}`);
     const url = `${WS_URL}?user_id=${encodeURIComponent(this.userId)}&device_token=${encodeURIComponent(this.deviceToken)}`;
     const ws = new WebSocket(url);
     this.ws = ws;
@@ -54,6 +64,7 @@ class WSClient {
     // Android에서 onclose가 발화하지 않는 경우를 대비한 연결 타임아웃
     this.connTimeoutId = setTimeout(() => {
       if (this.wsGen !== gen) return;
+      LOG(`connTimeout fired gen=${gen} → no onopen in 10s, retrying`);
       this._cancelConnTimeout();
       ws.onopen = null;
       ws.onmessage = null;
@@ -70,11 +81,16 @@ class WSClient {
     }, 10_000);
 
     ws.onopen = () => {
-      if (this.wsGen !== gen) return;
+      LOG(`onopen fired gen=${gen} wsGen=${this.wsGen} match=${this.wsGen === gen}`);
+      if (this.wsGen !== gen) {
+        LOG('onopen → IGNORED (stale gen)');
+        return;
+      }
       this._cancelConnTimeout();
       this.connected = true;
       this._cancelReconnect();
       this._startPing();
+      LOG('onopen → CONNECTED ✓ calling onConnectCb');
       this.onConnectCb?.();
     };
 
@@ -89,32 +105,43 @@ class WSClient {
     };
 
     ws.onclose = () => {
-      if (this.wsGen !== gen) return;  // 구버전 WS 이벤트 무시
+      LOG(`onclose fired gen=${gen} wsGen=${this.wsGen} match=${this.wsGen === gen}`);
+      if (this.wsGen !== gen) {
+        LOG('onclose → IGNORED (stale gen)');
+        return;
+      }
       this._cancelConnTimeout();
       this.connected = false;
       this._stopPing();
+      LOG(`onclose → DISCONNECTED. intentionalClose=${this.intentionalClose}`);
       this.onDisconnectCb?.();
       if (!this.intentionalClose && this.userId) {
+        LOG('onclose → scheduling reconnect in 3s');
         this.reconnectTimer = setTimeout(() => this._open(), 3000);
       }
     };
 
     ws.onerror = () => {
+      LOG(`onerror fired gen=${gen} wsGen=${this.wsGen}`);
       if (this.wsGen !== gen) return;
-      // onclose가 바로 뒤에 호출되므로 여기서는 별도 처리 불필요
     };
   }
 
   reconnect() {
     if (!this.userId) return;
     const state = this.ws?.readyState;
+    LOG(`reconnect() called. WS readyState=${state ?? 'null'}`);
     // OPEN/CONNECTING 상태면 무시 — 끊고 새로 만들면 onopen 이벤트가 wsGen 불일치로 손실됨
-    if (state === WebSocket.OPEN || state === WebSocket.CONNECTING) return;
+    if (state === WebSocket.OPEN || state === WebSocket.CONNECTING) {
+      LOG('reconnect() → SKIP: already OPEN or CONNECTING');
+      return;
+    }
     this.intentionalClose = false;
     this._open();
   }
 
   disconnect() {
+    LOG('disconnect() called (intentional)');
     this.intentionalClose = true;
     this.wsGen++;  // 모든 pending 이벤트 무효화
     this._stopPing();

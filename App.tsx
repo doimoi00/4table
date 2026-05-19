@@ -75,6 +75,7 @@ export default function App() {
   // ── AppState: 백→포그라운드 시 WS 재연결 ───────────────────────────────
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
+      console.log(`[App] AppState changed → ${state}, userId=${!!userId}`);
       if (state === 'active' && userId) {
         wsClient.reconnect();
       }
