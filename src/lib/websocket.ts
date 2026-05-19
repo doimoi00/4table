@@ -107,8 +107,11 @@ class WSClient {
 
   reconnect() {
     if (!this.userId) return;
+    const state = this.ws?.readyState;
+    // OPEN/CONNECTING 상태면 무시 — 끊고 새로 만들면 onopen 이벤트가 wsGen 불일치로 손실됨
+    if (state === WebSocket.OPEN || state === WebSocket.CONNECTING) return;
     this.intentionalClose = false;
-    this._open();  // _open()이 이전 WS 정리 + 새 연결 모두 처리
+    this._open();
   }
 
   disconnect() {
