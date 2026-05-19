@@ -39,7 +39,7 @@ type State = {
   timebombSeconds: number | null;
   timebombEndsAt: number | null;
   matchDeadlineEndsAt: number | null;
-  wsConnected: boolean;
+  wsConnected: boolean | null;  // null = 초기화 중 (첫 연결 시도 전)
   pendingCancelQueue: boolean;
 };
 
@@ -81,7 +81,7 @@ export const useStore = create<State & Actions>((set) => ({
   timebombSeconds: null,
   timebombEndsAt: null,
   matchDeadlineEndsAt: null,
-  wsConnected: false,
+  wsConnected: null,
   pendingCancelQueue: false,
 
   setUserId: (id) => set({ userId: id }),

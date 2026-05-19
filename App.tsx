@@ -42,10 +42,16 @@ export default function App() {
       const id = await getOrCreateUserId();
       setUserId(id);
 
-      // FCM 토큰 획득 실패(Google Play 미설치, 네트워크 문제 등)해도 WS 연결은 진행
+      // FCM 토큰: 5초 내 완료 안 되면 포기하고 WS 연결 진행
+      // getDevicePushTokenAsync()는 Google FCM 서버에 연결하므로 hang 가능
       let token = '';
       try {
-        token = await registerForPushNotifications();
+        token = await Promise.race([
+          registerForPushNotifications(),
+          new Promise<string>((_, reject) =>
+            setTimeout(() => reject(new Error('FCM_TIMEOUT')), 5000)
+          ),
+        ]);
       } catch {
         // 알림 없이 계속 진행
       }

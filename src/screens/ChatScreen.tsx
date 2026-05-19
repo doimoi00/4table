@@ -304,7 +304,7 @@ export default function ChatScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ConnectionBanner visible={!wsConnected} />
+      <ConnectionBanner visible={wsConnected === false} />
 
       {/* 헤더 */}
       <View style={styles.header}>

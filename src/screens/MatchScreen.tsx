@@ -141,7 +141,7 @@ export default function MatchScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <ConnectionBanner visible={!wsConnected} />
+      <ConnectionBanner visible={wsConnected === false} />
       <View style={styles.container}>
         {/* 헤더 */}
         <View style={styles.header}>

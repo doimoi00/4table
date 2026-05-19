@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, Text, TouchableOpacity } from 'react-native';
 import { wsClient } from '../lib/websocket';
 
@@ -7,24 +7,26 @@ type Props = {
 };
 
 export function ConnectionBanner({ visible }: Props) {
-  const slideAnim = useRef(new Animated.Value(-40)).current;
-  const [rendered, setRendered] = useState(visible);
+  const slideAnim = useRef(new Animated.Value(-44)).current;
+  const visibleRef = useRef(false);
 
   useEffect(() => {
-    if (visible) {
-      setRendered(true);
-      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 80, friction: 10 }).start();
-    } else {
-      Animated.spring(slideAnim, { toValue: -40, useNativeDriver: true, tension: 80, friction: 10 }).start(
-        ({ finished }) => { if (finished) setRendered(false); }
-      );
-    }
+    if (visible === visibleRef.current) return;
+    visibleRef.current = visible;
+
+    Animated.timing(slideAnim, {
+      toValue: visible ? 0 : -44,
+      duration: 220,
+      useNativeDriver: true,
+    }).start();
   }, [visible, slideAnim]);
 
-  if (!rendered) return null;
-
+  // 컴포넌트는 항상 마운트 — 애니메이션으로만 show/hide
   return (
-    <Animated.View style={[styles.banner, { transform: [{ translateY: slideAnim }] }]}>
+    <Animated.View
+      style={[styles.banner, { transform: [{ translateY: slideAnim }] }]}
+      pointerEvents={visible ? 'box-none' : 'none'}
+    >
       <Text style={styles.text}>🔌 서버 연결 끊김 — 재연결 중...</Text>
       <TouchableOpacity onPress={() => wsClient.reconnect()} style={styles.btn}>
         <Text style={styles.btnText}>지금 재연결</Text>
