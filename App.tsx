@@ -1,3 +1,4 @@
+import './src/lib/globalErrorHandler';
 import { useCallback, useEffect, useRef } from 'react';
 import { AppState, AppStateStatus, LogBox } from 'react-native';
 import { NavigationContainer, NavigationContainerRef } from '@react-navigation/native';
