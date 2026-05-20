@@ -236,7 +236,7 @@ export default function App() {
         addMessage({
           id: `sys-active-${Date.now()}`,
           senderId: '',
-          content: '4명 모두 입장! 대화를 시작하세요 🎉',
+          content: `${users.length}명 모두 입장! 대화를 시작하세요 🎉`,
           contentType: 'system',
           timestamp: new Date().toISOString(),
           isMine: false,

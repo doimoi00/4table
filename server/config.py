@@ -16,5 +16,5 @@ TIMEBOMB_SECONDS = 300             # 폭탄 타이머 (5분)
 RECONNECT_GRACE_SECONDS = 30      # 연결 끊긴 후 재접속 유예시간
 QUEUE_IDLE_TIMEOUT_SECONDS = 3600  # 큐 최대 대기 시간 (1시간)
 
-# 매칭 인원
-MATCH_SIZE = 4
+# 매칭 인원 (환경변수로 오버라이드 가능 — 테스트 시 MATCH_SIZE=2)
+MATCH_SIZE = int(os.getenv("MATCH_SIZE", "4"))

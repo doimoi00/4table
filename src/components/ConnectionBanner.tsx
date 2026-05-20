@@ -7,7 +7,7 @@ type Props = {
 };
 
 export function ConnectionBanner({ visible }: Props) {
-  const slideAnim = useRef(new Animated.Value(-44)).current;
+  const slideAnim = useRef(new Animated.Value(-100)).current;
   const visibleRef = useRef(false);
 
   useEffect(() => {
@@ -15,7 +15,7 @@ export function ConnectionBanner({ visible }: Props) {
     visibleRef.current = visible;
 
     Animated.timing(slideAnim, {
-      toValue: visible ? 0 : -44,
+      toValue: visible ? 0 : -100,
       duration: 220,
       useNativeDriver: true,
     }).start();

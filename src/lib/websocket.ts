@@ -27,7 +27,7 @@ class WSClient {
     this.userId = userId;
     this.deviceToken = deviceToken;
     this.intentionalClose = false;
-    LOG(`connect() called. userId=${userId.slice(0, 8)}...`);
+    LOG(`connect() called. userId=${userId.slice(0, 8)}... url=${WS_URL}`);
     this._open();
   }
 

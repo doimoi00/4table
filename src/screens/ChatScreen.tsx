@@ -332,7 +332,7 @@ export default function ChatScreen() {
       {queueStatus === 'matched_waiting' && (
         <View style={styles.waitingOverlay}>
           <Text style={styles.waitingText}>⏳ 나머지 인원 입장 대기 중...</Text>
-          <Text style={styles.waitingConnected}>{connectedUsers.length} / 4 명 입장 완료</Text>
+          <Text style={styles.waitingConnected}>{connectedUsers.length} / {allUsers.length} 명 입장 완료</Text>
         </View>
       )}
 
