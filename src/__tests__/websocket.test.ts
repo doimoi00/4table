@@ -32,7 +32,7 @@ class MockWebSocket {
     MockWebSocket.instances.push(this);
   }
 
-  send(_data: string) {}
+  send(_data: string) { /* intentional no-op mock */ }
   close() {
     this.readyState = WS_CLOSED;
     this.onclose?.();
