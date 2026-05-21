@@ -205,7 +205,8 @@ class RoomManager:
         if not room or room.status not in (RoomStatus.ACTIVE, RoomStatus.TIMEBOMB):
             return False, "ROOM_NOT_ACTIVE"
 
-        # 히스토리의 해당 메시지에 리액션 반영 (토글)
+        # 히스토리에서 해당 메시지 탐색 — 없으면 유령 리액션 방지
+        found = False
         for msg in room.message_history:
             if msg.get("msg_id") == message_id:
                 reactions = msg.setdefault("reactions", {})
@@ -214,7 +215,11 @@ class RoomManager:
                     uids.remove(sender_id)
                 else:
                     uids.append(sender_id)
+                found = True
                 break
+
+        if not found:
+            return False, "MESSAGE_NOT_FOUND"
 
         await self._broadcast(room_id, {
             "type": "REACT",

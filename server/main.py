@@ -243,7 +243,7 @@ async def websocket_endpoint(
                     await ws.send_json({"type": "ERROR", "code": "NOT_IN_ROOM"})
                     continue
                 target_uid = (data.get("target_user_id") or "").strip()
-                if not room_manager.is_room_member(current_room_id, target_uid):
+                if target_uid == user_id or not room_manager.is_room_member(current_room_id, target_uid):
                     await ws.send_json({"type": "ERROR", "code": "INVALID_TARGET"})
                     continue
                 await room_manager.relay_message(
