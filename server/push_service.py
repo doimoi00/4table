@@ -134,3 +134,15 @@ async def notify_match_failed(device_tokens: List[str]) -> None:
         body="입장 시간 초과로 매칭이 무효가 되었습니다. 다시 시도해주세요.",
         data={"type": "MATCH_FAILED"},
     )
+
+
+async def notify_timebomb_triggered(
+    room_id: str, device_tokens: List[str], countdown_seconds: int
+) -> None:
+    mins = countdown_seconds // 60
+    await send_push(
+        device_tokens=device_tokens,
+        title="⏰ 방이 곧 폭발합니다!",
+        body=f"{mins}분 안에 다시 접속하지 않으면 방이 종료됩니다.",
+        data={"type": "TIMEBOMB", "room_id": room_id, "countdown": str(countdown_seconds)},
+    )

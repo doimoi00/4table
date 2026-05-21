@@ -155,8 +155,26 @@ export default function ChatScreen() {
     try {
       if (voiceActive) {
         webrtcManager.stopVoice();
+        addMessage({
+          id: `sys-voice-end-${Date.now()}`,
+          senderId: '',
+          content: '🎙️ 음성 통화를 종료했습니다',
+          contentType: 'system',
+          timestamp: new Date().toISOString(),
+          isMine: false,
+          reactions: {},
+        });
       } else {
         await webrtcManager.startVoice();
+        addMessage({
+          id: `sys-voice-start-${Date.now()}`,
+          senderId: '',
+          content: '🎙️ 음성 통화를 시작했습니다 — 마이크 버튼을 탭하면 참여',
+          contentType: 'system',
+          timestamp: new Date().toISOString(),
+          isMine: false,
+          reactions: {},
+        });
       }
     } catch {
       Alert.alert('마이크 오류', '마이크 접근 권한이 필요합니다.');

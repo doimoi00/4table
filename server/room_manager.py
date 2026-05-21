@@ -21,7 +21,7 @@ from fastapi import WebSocket
 
 from config import MATCH_TIMEOUT_SECONDS, RECONNECT_GRACE_SECONDS, TIMEBOMB_SECONDS
 from models import Room, RoomStatus, RoomUser
-from push_service import notify_match_failed, notify_match_found
+from push_service import notify_match_failed, notify_match_found, notify_timebomb_triggered
 
 logger = logging.getLogger(__name__)
 
@@ -397,6 +397,14 @@ class RoomManager:
         })
 
         room.timebomb_task = asyncio.create_task(self._timebomb_countdown(room_id))
+
+        # 오프라인 유저에게 푸시 알림
+        offline_tokens = [
+            u.device_token for u in room.users.values()
+            if not u.connected and u.device_token
+        ]
+        if offline_tokens:
+            asyncio.create_task(notify_timebomb_triggered(room_id, offline_tokens, TIMEBOMB_SECONDS))
 
     async def _timebomb_countdown(self, room_id: str) -> None:
         await asyncio.sleep(TIMEBOMB_SECONDS)
