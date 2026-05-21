@@ -370,7 +370,11 @@ async def rls_tests():
             with urllib.request.urlopen(req, timeout=10) as r:
                 return r.status, json.loads(r.read())
         except urllib.error.HTTPError as e:
-            return e.code, json.loads(e.read() or b'{}')
+            try:
+                body = e.read()
+                return e.code, json.loads(body) if body else {}
+            except Exception:
+                return e.code, {}
         except Exception as ex:
             return 0, str(ex)
 
