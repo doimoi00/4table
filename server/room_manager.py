@@ -106,6 +106,7 @@ class RoomManager:
         all_user_ids = list(room.users.keys())
         connected_ids = [uid for uid, u in room.users.items() if u.connected]
 
+        voice_user_ids = [uid for uid, u in room.users.items() if u.voice_active]
         join_payload: dict = {
             "type": "ROOM_JOINED",
             "room_id": room_id,
@@ -114,6 +115,7 @@ class RoomManager:
             "connected_users": connected_ids,
             "total_users": len(room.users),
             "message_history": room.message_history,  # 채팅 히스토리 전송
+            "voice_users": voice_user_ids,
         }
 
         # 폭탄 상태로 재입장: 남은 시간 포함
@@ -228,6 +230,20 @@ class RoomManager:
             "emoji": emoji,
         })
         return True, ""
+
+    async def relay_voice_status(self, room_id: str, user_id: str, active: bool) -> None:
+        """음성 채팅 참여 상태를 저장하고 룸 멤버에게 브로드캐스트."""
+        room = self.rooms.get(room_id)
+        if not room or room.status not in (RoomStatus.ACTIVE, RoomStatus.TIMEBOMB):
+            return
+        user = room.users.get(user_id)
+        if user:
+            user.voice_active = active
+        await self._broadcast(room_id, {
+            "type": "VOICE_STATUS",
+            "user_id": user_id,
+            "active": active,
+        }, exclude=user_id)
 
     async def relay_typing(self, room_id: str, user_id: str, is_typing: bool) -> None:
         """타이핑 상태를 나머지 멤버에게 중계."""

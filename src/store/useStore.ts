@@ -45,6 +45,7 @@ type State = {
   voiceActive: boolean;
   isMuted: boolean;
   pendingVoiceInvite: boolean;
+  voiceParticipants: string[];
 };
 
 type Actions = {
@@ -70,6 +71,7 @@ type Actions = {
   setVoiceActive: (active: boolean) => void;
   setMuted: (muted: boolean) => void;
   setPendingVoiceInvite: (v: boolean) => void;
+  setVoiceParticipants: (ids: string[]) => void;
   resetRoom: () => void;
 };
 
@@ -95,6 +97,7 @@ export const useStore = create<State & Actions>((set) => ({
   voiceActive: false,
   isMuted: false,
   pendingVoiceInvite: false,
+  voiceParticipants: [],
 
   setUserId: (id) => set({ userId: id }),
   setDeviceToken: (token) => set({ deviceToken: token }),
@@ -127,6 +130,7 @@ export const useStore = create<State & Actions>((set) => ({
   setVoiceActive: (active) => set({ voiceActive: active }),
   setMuted: (muted) => set({ isMuted: muted }),
   setPendingVoiceInvite: (v) => set({ pendingVoiceInvite: v }),
+  setVoiceParticipants: (ids) => set({ voiceParticipants: ids }),
   resetRoom: () =>
     set({
       queueStatus: 'idle',
@@ -141,5 +145,6 @@ export const useStore = create<State & Actions>((set) => ({
       voiceActive: false,
       isMuted: false,
       pendingVoiceInvite: false,
+      voiceParticipants: [],
     }),
 }));

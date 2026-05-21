@@ -17,6 +17,7 @@ const CHUNK_SIZE = 14_000;
 type MediaReceivedHandler = (peerId: string, base64: string, mimeType: string) => void;
 export type VoiceChangeHandler = (active: boolean, muted: boolean) => void;
 export type VoiceInviteHandler = (hasPending: boolean) => void;
+export type VoiceParticipantHandler = (participants: string[]) => void;
 
 // react-native-webrtc 런타임 import
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -236,6 +237,8 @@ class WebRTCManager {
   private pendingVoiceOffers = new Map<string, unknown>();
   private onVoiceChange: VoiceChangeHandler | null = null;
   private onVoiceInvite: VoiceInviteHandler | null = null;
+  private onVoiceParticipants: VoiceParticipantHandler | null = null;
+  private voiceParticipantIds = new Set<string>();
   private _isMuted = false;
   private _allUsers: string[] = [];
   private _myUserId = '';
@@ -243,6 +246,11 @@ class WebRTCManager {
   setMediaHandler(fn: MediaReceivedHandler) { this.onMedia = fn; }
   setVoiceChangeHandler(fn: VoiceChangeHandler) { this.onVoiceChange = fn; }
   setVoiceInviteHandler(fn: VoiceInviteHandler) { this.onVoiceInvite = fn; }
+  setVoiceParticipantHandler(fn: VoiceParticipantHandler) { this.onVoiceParticipants = fn; }
+
+  private _notifyParticipants() {
+    this.onVoiceParticipants?.([...this.voiceParticipantIds]);
+  }
 
   // 방 활성화 시 호출 — 이미지 피어 + 룸 메타데이터 저장
   initRoom(allUsers: string[], myUserId: string) {
@@ -287,6 +295,7 @@ class WebRTCManager {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.localStream = await lib.mediaDevices.getUserMedia({ audio: true }) as any;
     this._isMuted = false;
+    this.voiceParticipantIds.add(this._myUserId);
 
     this._allUsers.forEach((peerId) => {
       if (peerId === this._myUserId) return;
@@ -304,6 +313,7 @@ class WebRTCManager {
       }
     });
 
+    this._notifyParticipants();
     this.onVoiceChange?.(true, false);
     this.onVoiceInvite?.(false);
   }
@@ -326,6 +336,8 @@ class WebRTCManager {
     this.voicePeers.clear();
     this.pendingVoiceOffers.clear();
     this._isMuted = false;
+    this.voiceParticipantIds.clear();
+    this._notifyParticipants();
     this.onVoiceChange?.(false, false);
     this.onVoiceInvite?.(false);
   }
@@ -351,6 +363,8 @@ class WebRTCManager {
       }
     } else if (signal_type === 'voice_answer') {
       this.voicePeers.get(sender_id)?.handleAnswer(payload).catch(console.warn);
+      this.voiceParticipantIds.add(sender_id);
+      this._notifyParticipants();
     } else if (signal_type === 'voice_candidate') {
       this.voicePeers.get(sender_id)?.addCandidate(payload).catch(console.warn);
     }
@@ -360,10 +374,22 @@ class WebRTCManager {
     this.peers.forEach((peer) => peer.sendBase64(id, base64, mimeType));
   }
 
+  reinviteVoicePeer(peerId: string) {
+    if (!this.localStream) return;
+    const existing = this.voicePeers.get(peerId);
+    if (existing) { existing.close(); this.voicePeers.delete(peerId); }
+    const voicePeer = new VoicePeerConn(peerId);
+    this.voicePeers.set(peerId, voicePeer);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this.localStream!.getAudioTracks().forEach((track: any) => voicePeer.addLocalTrack(track, this.localStream));
+    voicePeer.createOffer().catch(console.warn);
+  }
+
   cleanup() {
     this.stopVoice();
     this.peers.forEach((p) => p.close());
     this.peers.clear();
+    this.voiceParticipantIds.clear();
     this._allUsers = [];
     this._myUserId = '';
   }

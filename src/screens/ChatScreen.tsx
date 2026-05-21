@@ -38,15 +38,20 @@ function genMsgId(): string {
   return `${t}-${r}`;
 }
 
-function UserDot({ userId, users, connectedUsers }: {
+function UserDot({ userId, users, connectedUsers, voiceParticipants }: {
   readonly userId: string; readonly users: string[]; readonly connectedUsers: string[];
+  readonly voiceParticipants: string[];
 }) {
   const index = users.indexOf(userId);
   const color = USER_COLORS[index % USER_COLORS.length];
   const isConnected = connectedUsers.includes(userId);
+  const inVoice = voiceParticipants.includes(userId);
   return (
-    <View style={[styles.userDot, { backgroundColor: color, opacity: isConnected ? 1 : 0.3 }]}>
-      <Text style={styles.userDotText}>{index + 1}</Text>
+    <View style={styles.userDotWrapper}>
+      <View style={[styles.userDot, { backgroundColor: color, opacity: isConnected ? 1 : 0.3 }]}>
+        <Text style={styles.userDotText}>{index + 1}</Text>
+      </View>
+      {inVoice && <View style={styles.voiceIndicatorDot} />}
     </View>
   );
 }
@@ -60,7 +65,7 @@ export default function ChatScreen() {
     userId, messages, addMessage, connectedUsers, typingUsers,
     queueStatus, timebombEndsAt, matchDeadlineEndsAt,
     resetRoom, roomId, allUsers, wsConnected, errorMsg, setErrorMsg,
-    voiceActive, isMuted, pendingVoiceInvite,
+    voiceActive, isMuted, pendingVoiceInvite, voiceParticipants,
   } = useStore();
 
   const [input, setInput] = useState('');
@@ -154,6 +159,7 @@ export default function ChatScreen() {
   async function toggleVoice() {
     if (voiceActive) {
       webrtcManager.stopVoice();
+      wsClient.send({ type: 'VOICE_STATUS', active: false });
       addMessage({
         id: `sys-voice-end-${Date.now()}`,
         senderId: '',
@@ -166,6 +172,7 @@ export default function ChatScreen() {
     } else {
       try {
         await webrtcManager.startVoice();
+        wsClient.send({ type: 'VOICE_STATUS', active: true });
         addMessage({
           id: `sys-voice-start-${Date.now()}`,
           senderId: '',
@@ -368,7 +375,7 @@ export default function ChatScreen() {
           <TouchableOpacity style={styles.voiceMuteBtn} onPress={() => webrtcManager.toggleMute()}>
             <Text style={styles.voiceMuteBtnText}>{isMuted ? '🔇' : '🔊'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.voiceEndBtn} onPress={() => webrtcManager.stopVoice()}>
+          <TouchableOpacity style={styles.voiceEndBtn} onPress={toggleVoice}>
             <Text style={styles.voiceEndBtnText}>종료</Text>
           </TouchableOpacity>
         </View>
@@ -384,7 +391,7 @@ export default function ChatScreen() {
         <Text style={styles.logo}>4table</Text>
         <View style={styles.usersRow}>
           {allUsers.map((uid) => (
-            <UserDot key={uid} userId={uid} users={allUsers} connectedUsers={connectedUsers} />
+            <UserDot key={uid} userId={uid} users={allUsers} connectedUsers={connectedUsers} voiceParticipants={voiceParticipants} />
           ))}
         </View>
         <TouchableOpacity style={styles.leaveBtn} onPress={handleLeave}>
@@ -662,11 +669,18 @@ const styles = StyleSheet.create({
   },
   logo: { fontSize: 18, fontWeight: '900', color: '#F9FAFB', marginRight: 12 },
   usersRow: { flex: 1, flexDirection: 'row', gap: 6 },
+  userDotWrapper: { position: 'relative' },
   userDot: {
     width: 28, height: 28, borderRadius: 14,
     alignItems: 'center', justifyContent: 'center',
   },
   userDotText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  voiceIndicatorDot: {
+    position: 'absolute', bottom: -1, right: -1,
+    width: 10, height: 10, borderRadius: 5,
+    backgroundColor: '#22C55E',
+    borderWidth: 1.5, borderColor: '#0A0E1A',
+  },
   leaveBtn: {
     paddingHorizontal: 12, paddingVertical: 6,
     borderRadius: 8, borderWidth: 1, borderColor: '#374151',

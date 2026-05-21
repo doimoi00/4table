@@ -257,6 +257,12 @@ async def websocket_endpoint(
                     },
                 )
 
+            # ── 음성 채팅 상태 브로드캐스트 ──────────────────────────────────
+            elif msg_type == "VOICE_STATUS":
+                if current_room_id:
+                    active = bool(data.get("active", False))
+                    await room_manager.relay_voice_status(current_room_id, user_id, active)
+
             # ── 타이핑 인디케이터 ─────────────────────────────────────────────
             elif msg_type == "TYPING":
                 if current_room_id:

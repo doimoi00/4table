@@ -44,7 +44,7 @@ export default function App() {
     setAllUsers, setConnectedUsers, setTypingUser,
     startTimebomb, cancelTimebomb,
     resetRoom, startMatchDeadline, setWsConnected, setErrorMsg,
-    setVoiceActive, setMuted, setPendingVoiceInvite,
+    setVoiceActive, setMuted, setPendingVoiceInvite, setVoiceParticipants,
   } = useStore();
 
   // ── 초기화 ──────────────────────────────────────────────────────────────
@@ -112,7 +112,10 @@ export default function App() {
     webrtcManager.setVoiceInviteHandler((hasPending) => {
       setPendingVoiceInvite(hasPending);
     });
-  }, [setVoiceActive, setMuted, setPendingVoiceInvite]);
+    webrtcManager.setVoiceParticipantHandler((ids) => {
+      setVoiceParticipants(ids);
+    });
+  }, [setVoiceActive, setMuted, setPendingVoiceInvite, setVoiceParticipants]);
 
   // ── ROOM_JOINED 핸들러 ───────────────────────────────────────────────────
   const handleRoomJoined = useCallback((msg: Record<string, unknown>) => {
@@ -139,6 +142,10 @@ export default function App() {
       );
     }
 
+    // 음성 참여자 목록 복원 (server-side VOICE_STATUS 지원 후 활성화)
+    const voiceUsers = (msg.voice_users as string[]) ?? [];
+    if (voiceUsers.length > 0) setVoiceParticipants(voiceUsers);
+
     if (msg.status === 'ACTIVE') {
       setQueueStatus('active');
       if (myId && allUsers.length > 0 && !webrtcInitializedRef.current) {
@@ -158,7 +165,7 @@ export default function App() {
     } else {
       setQueueStatus('matched_waiting');
     }
-  }, [setAllUsers, setConnectedUsers, setRoomId, setQueueStatus, setMessages, startTimebomb]);
+  }, [setAllUsers, setConnectedUsers, setRoomId, setQueueStatus, setMessages, startTimebomb, setVoiceParticipants]);
 
   // ── USER_CONNECTED/DISCONNECTED 처리 ────────────────────────────────────
   const handleUserConnectionChange = useCallback((type: string, msg: Record<string, unknown>) => {
@@ -177,6 +184,10 @@ export default function App() {
       isMine: false,
       reactions: {},
     });
+    // 음성 통화 중일 때 재접속 유저에게 voice_offer 재전송
+    if (type === 'USER_CONNECTED' && webrtcManager.voiceActive) {
+      webrtcManager.reinviteVoicePeer(eventUid);
+    }
   }, [setConnectedUsers, addMessage]);
 
   // ── TIMEBOMB_TRIGGERED 처리 ───────────────────────────────────────────────
@@ -212,6 +223,13 @@ export default function App() {
       case 'MESSAGE_NOT_FOUND':
         setErrorMsg('리액션 실패 — 메시지를 찾을 수 없습니다');
         break;
+      case 'INVALID_EMOJI':
+        setErrorMsg('올바르지 않은 이모지입니다');
+        break;
+      case 'INVALID_TARGET':
+        setErrorMsg('잘못된 시그널 대상입니다');
+        break;
+      case 'NOT_IN_ROOM':
       case 'ROOM_NOT_FOUND':
         resetRoom();
         webrtcManager.cleanup();
@@ -345,6 +363,17 @@ export default function App() {
         break;
       }
 
+      case 'VOICE_STATUS': {
+        const voiceUid = msg.user_id as string;
+        const voiceOn = msg.active as boolean;
+        const currentParticipants = useStore.getState().voiceParticipants;
+        const updated = voiceOn
+          ? [...new Set([...currentParticipants, voiceUid])]
+          : currentParticipants.filter((id) => id !== voiceUid);
+        setVoiceParticipants(updated);
+        break;
+      }
+
       case 'TIMEBOMB_TRIGGERED':
         handleTimebombTriggered(msg);
         break;
@@ -384,6 +413,7 @@ export default function App() {
     startTimebomb, cancelTimebomb,
     resetRoom, startMatchDeadline, handleRoomJoined,
     handleUserConnectionChange, handleTimebombTriggered, handleWsError,
+    setVoiceParticipants,
   ]);
 
   useEffect(() => {

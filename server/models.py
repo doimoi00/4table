@@ -28,6 +28,7 @@ class RoomUser:
     ws: Optional[Any] = None
     connected: bool = False
     disconnected_at: Optional[datetime] = None
+    voice_active: bool = False
     # 채팅 도배 방지: 최근 메시지 발송 타임스탬프 (CHAT_RATE_LIMIT 크기)
     chat_timestamps: Deque[float] = field(default_factory=lambda: deque(maxlen=3))
 
