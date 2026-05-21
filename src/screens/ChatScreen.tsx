@@ -52,7 +52,7 @@ export default function ChatScreen() {
   const {
     userId, messages, addMessage, connectedUsers, typingUsers,
     queueStatus, timebombEndsAt, matchDeadlineEndsAt,
-    resetRoom, roomId, allUsers, wsConnected,
+    resetRoom, roomId, allUsers, wsConnected, errorMsg, setErrorMsg,
   } = useStore();
 
   const [input, setInput] = useState('');
@@ -302,9 +302,21 @@ export default function ChatScreen() {
 
   const canChat = queueStatus === 'active' || queueStatus === 'timebomb';
 
+  // 에러 메시지 자동 소멸
+  useEffect(() => {
+    if (!errorMsg) return;
+    const t = setTimeout(() => setErrorMsg(null), 3000);
+    return () => clearTimeout(t);
+  }, [errorMsg, setErrorMsg]);
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ConnectionBanner visible={wsConnected === false} />
+      {errorMsg && (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorBannerText}>{errorMsg}</Text>
+        </View>
+      )}
 
       {/* 헤더 */}
       <View style={styles.header}>
@@ -567,6 +579,12 @@ export default function ChatScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#0A0E1A' },
+  errorBanner: {
+    backgroundColor: '#7F1D1D',
+    paddingHorizontal: 16, paddingVertical: 8,
+    alignItems: 'center',
+  },
+  errorBannerText: { color: '#FCA5A5', fontSize: 13, fontWeight: '500' },
   header: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: 16, paddingVertical: 12,

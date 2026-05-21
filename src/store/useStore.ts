@@ -41,6 +41,7 @@ type State = {
   matchDeadlineEndsAt: number | null;
   wsConnected: boolean | null;  // null = 초기화 중 (첫 연결 시도 전)
   pendingCancelQueue: boolean;
+  errorMsg: string | null;
 };
 
 type Actions = {
@@ -62,6 +63,7 @@ type Actions = {
   startMatchDeadline: (seconds: number) => void;
   setWsConnected: (connected: boolean) => void;
   setPendingCancelQueue: (v: boolean) => void;
+  setErrorMsg: (msg: string | null) => void;
   resetRoom: () => void;
 };
 
@@ -83,6 +85,7 @@ export const useStore = create<State & Actions>((set) => ({
   matchDeadlineEndsAt: null,
   wsConnected: null,
   pendingCancelQueue: false,
+  errorMsg: null,
 
   setUserId: (id) => set({ userId: id }),
   setDeviceToken: (token) => set({ deviceToken: token }),
@@ -111,6 +114,7 @@ export const useStore = create<State & Actions>((set) => ({
     set({ matchDeadlineEndsAt: Date.now() + seconds * 1000 }),
   setWsConnected: (connected) => set({ wsConnected: connected }),
   setPendingCancelQueue: (v) => set({ pendingCancelQueue: v }),
+  setErrorMsg: (msg) => set({ errorMsg: msg }),
   resetRoom: () =>
     set({
       queueStatus: 'idle',
