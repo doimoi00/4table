@@ -42,6 +42,8 @@ type State = {
   wsConnected: boolean | null;  // null = 초기화 중 (첫 연결 시도 전)
   pendingCancelQueue: boolean;
   errorMsg: string | null;
+  voiceActive: boolean;
+  isMuted: boolean;
 };
 
 type Actions = {
@@ -64,6 +66,8 @@ type Actions = {
   setWsConnected: (connected: boolean) => void;
   setPendingCancelQueue: (v: boolean) => void;
   setErrorMsg: (msg: string | null) => void;
+  setVoiceActive: (active: boolean) => void;
+  setMuted: (muted: boolean) => void;
   resetRoom: () => void;
 };
 
@@ -86,6 +90,8 @@ export const useStore = create<State & Actions>((set) => ({
   wsConnected: null,
   pendingCancelQueue: false,
   errorMsg: null,
+  voiceActive: false,
+  isMuted: false,
 
   setUserId: (id) => set({ userId: id }),
   setDeviceToken: (token) => set({ deviceToken: token }),
@@ -115,6 +121,8 @@ export const useStore = create<State & Actions>((set) => ({
   setWsConnected: (connected) => set({ wsConnected: connected }),
   setPendingCancelQueue: (v) => set({ pendingCancelQueue: v }),
   setErrorMsg: (msg) => set({ errorMsg: msg }),
+  setVoiceActive: (active) => set({ voiceActive: active }),
+  setMuted: (muted) => set({ isMuted: muted }),
   resetRoom: () =>
     set({
       queueStatus: 'idle',

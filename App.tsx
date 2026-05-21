@@ -44,6 +44,7 @@ export default function App() {
     setAllUsers, setConnectedUsers, setTypingUser,
     startTimebomb, cancelTimebomb,
     resetRoom, startMatchDeadline, setWsConnected, setErrorMsg,
+    setVoiceActive, setMuted,
   } = useStore();
 
   // ── 초기화 ──────────────────────────────────────────────────────────────
@@ -101,6 +102,14 @@ export default function App() {
       });
     });
   }, [addMessage]);
+
+  // ── 음성 채팅 상태 동기화 ────────────────────────────────────────────────
+  useEffect(() => {
+    webrtcManager.setVoiceChangeHandler((active, muted) => {
+      setVoiceActive(active);
+      setMuted(muted);
+    });
+  }, [setVoiceActive, setMuted]);
 
   // ── ROOM_JOINED 핸들러 ───────────────────────────────────────────────────
   const handleRoomJoined = useCallback((msg: Record<string, unknown>) => {
@@ -297,9 +306,15 @@ export default function App() {
         });
         break;
 
-      case 'SIGNAL':
-        webrtcManager.handleSignal(msg);
+      case 'SIGNAL': {
+        const stype = msg.signal_type as string;
+        if (stype?.startsWith('voice_')) {
+          webrtcManager.handleVoiceSignal(msg);
+        } else {
+          webrtcManager.handleSignal(msg);
+        }
         break;
+      }
 
       case 'TIMEBOMB_TRIGGERED':
         handleTimebombTriggered(msg);

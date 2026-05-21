@@ -1,10 +1,9 @@
 /**
- * WebRTC P2P 미디어 전송 (이미지/영상)
+ * WebRTC P2P 미디어 전송 — 이미지(데이터 채널) + 음성(오디오 트랙)
  *
  * 4명 메시 토폴로지: 낮은 인덱스 유저가 높은 인덱스 유저에게 offer
- * 데이터 채널로 이미지 청크 전송 (16KB/chunk)
- *
- * 의존: react-native-webrtc (네이티브 빌드 필요)
+ * 데이터 채널: 이미지 청크 (14KB/chunk)
+ * 음성: audio track — signal_type 접두어 'voice_'
  */
 
 import { wsClient } from './websocket';
@@ -13,11 +12,12 @@ const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
 ];
-const CHUNK_SIZE = 14_000; // 14KB — data channel 안전 사이즈
+const CHUNK_SIZE = 14_000;
 
 type MediaReceivedHandler = (peerId: string, base64: string, mimeType: string) => void;
+export type VoiceChangeHandler = (active: boolean, muted: boolean) => void;
 
-// react-native-webrtc 타입 (런타임 import)
+// react-native-webrtc 런타임 import
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let RNWebRTC: any = null;
 function getRNWebRTC() {
@@ -26,18 +26,23 @@ function getRNWebRTC() {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       RNWebRTC = require('react-native-webrtc');
     } catch {
-      console.warn('[WebRTC] react-native-webrtc 로드 실패 — 미디어 전송 불가');
+      console.warn('[WebRTC] react-native-webrtc 로드 실패');
     }
   }
   return RNWebRTC;
 }
+
+// ─── 이미지 데이터 채널 피어 ───────────────────────────────────────────────
 
 class PeerConn {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private readonly pc: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private dc: any = null;
-  private incomingChunks: Record<string, { chunks: string[]; total: number; mime: string; timer: ReturnType<typeof setTimeout> }> = {};
+  private incomingChunks: Record<string, {
+    chunks: string[]; total: number; mime: string;
+    timer: ReturnType<typeof setTimeout>;
+  }> = {};
 
   constructor(
     private readonly peerId: string,
@@ -45,9 +50,7 @@ class PeerConn {
   ) {
     const lib = getRNWebRTC();
     if (!lib) return;
-
     this.pc = new lib.RTCPeerConnection({ iceServers: ICE_SERVERS });
-
     this.pc.onicecandidate = (e: { candidate: unknown }) => {
       if (e.candidate) {
         wsClient.send({
@@ -56,7 +59,6 @@ class PeerConn {
         });
       }
     };
-
     this.pc.ondatachannel = (e: { channel: unknown }) => {
       this._setupDC(e.channel);
     };
@@ -66,19 +68,14 @@ class PeerConn {
   private _setupDC(dc: any) {
     this.dc = dc;
     dc.binaryType = 'arraybuffer';
-    dc.onmessage = (e: { data: string }) => {
-      this._handleChunk(e.data);
-    };
+    dc.onmessage = (e: { data: string }) => this._handleChunk(e.data);
   }
 
   private _handleChunk(json: string) {
     try {
       const { id, index, total, mime, data } = JSON.parse(json);
       if (!this.incomingChunks[id]) {
-        // 30초 내 완성되지 않은 청크는 메모리 누수 방지를 위해 자동 삭제
-        const timer = setTimeout(() => {
-          delete this.incomingChunks[id];
-        }, 30_000);
+        const timer = setTimeout(() => { delete this.incomingChunks[id]; }, 30_000);
         this.incomingChunks[id] = { chunks: [], total, mime, timer };
       }
       this.incomingChunks[id].chunks[index] = data;
@@ -89,18 +86,14 @@ class PeerConn {
         delete this.incomingChunks[id];
         this.onMedia(this.peerId, base64, mimeType);
       }
-    } catch {
-      // malformed chunk
-    }
+    } catch { /* malformed chunk */ }
   }
 
   async createOffer() {
     const lib = getRNWebRTC();
     if (!lib || !this.pc) return;
-
     this.dc = this.pc.createDataChannel('media');
     this._setupDC(this.dc);
-
     const offer = await this.pc.createOffer();
     await this.pc.setLocalDescription(offer);
     wsClient.send({
@@ -130,7 +123,7 @@ class PeerConn {
   async addCandidate(payload: unknown) {
     const lib = getRNWebRTC();
     if (!lib || !this.pc) return;
-    await this.pc.addIceCandidate(new lib.RTCIceCandidate(payload));
+    try { await this.pc.addIceCandidate(new lib.RTCIceCandidate(payload)); } catch { /* stale */ }
   }
 
   sendBase64(id: string, base64: string, mimeType: string) {
@@ -143,26 +136,106 @@ class PeerConn {
   }
 
   close() {
-    // 미완성 청크 타이머 정리
-    for (const entry of Object.values(this.incomingChunks)) {
-      clearTimeout(entry.timer);
-    }
+    for (const entry of Object.values(this.incomingChunks)) clearTimeout(entry.timer);
     this.incomingChunks = {};
     try { this.dc?.close(); } catch { /* ignore */ }
     try { this.pc?.close(); } catch { /* ignore */ }
   }
 }
 
+// ─── 음성 채팅 피어 ───────────────────────────────────────────────────────────
+
+class VoicePeerConn {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private readonly pc: any;
+
+  constructor(private readonly peerId: string) {
+    const lib = getRNWebRTC();
+    if (!lib) return;
+    this.pc = new lib.RTCPeerConnection({ iceServers: ICE_SERVERS });
+    this.pc.onicecandidate = (e: { candidate: unknown }) => {
+      if (e.candidate) {
+        wsClient.send({
+          type: 'SIGNAL', signal_type: 'voice_candidate',
+          target_user_id: peerId, payload: e.candidate,
+        });
+      }
+    };
+    // Remote audio track plays automatically via system audio output
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  addLocalTrack(track: any, stream: any) {
+    if (this.pc) this.pc.addTrack(track, stream);
+  }
+
+  async createOffer() {
+    if (!this.pc) return;
+    const offer = await this.pc.createOffer();
+    await this.pc.setLocalDescription(offer);
+    wsClient.send({
+      type: 'SIGNAL', signal_type: 'voice_offer',
+      target_user_id: this.peerId, payload: offer,
+    });
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async handleOffer(payload: unknown, localStream: any | null) {
+    const lib = getRNWebRTC();
+    if (!lib || !this.pc) return;
+    await this.pc.setRemoteDescription(new lib.RTCSessionDescription(payload));
+    if (localStream) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      localStream.getAudioTracks().forEach((track: any) => this.pc.addTrack(track, localStream));
+    }
+    const answer = await this.pc.createAnswer();
+    await this.pc.setLocalDescription(answer);
+    wsClient.send({
+      type: 'SIGNAL', signal_type: 'voice_answer',
+      target_user_id: this.peerId, payload: answer,
+    });
+  }
+
+  async handleAnswer(payload: unknown) {
+    const lib = getRNWebRTC();
+    if (!lib || !this.pc) return;
+    await this.pc.setRemoteDescription(new lib.RTCSessionDescription(payload));
+  }
+
+  async addCandidate(payload: unknown) {
+    const lib = getRNWebRTC();
+    if (!lib || !this.pc) return;
+    try { await this.pc.addIceCandidate(new lib.RTCIceCandidate(payload)); } catch { /* stale */ }
+  }
+
+  close() {
+    try { this.pc?.close(); } catch { /* ignore */ }
+  }
+}
+
+// ─── WebRTC 매니저 ────────────────────────────────────────────────────────────
+
 class WebRTCManager {
   private readonly peers = new Map<string, PeerConn>();
   private onMedia: MediaReceivedHandler | null = null;
 
-  setMediaHandler(fn: MediaReceivedHandler) {
-    this.onMedia = fn;
-  }
+  // 음성 채팅 상태
+  private readonly voicePeers = new Map<string, VoicePeerConn>();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private localStream: any = null;
+  private pendingVoiceOffers = new Map<string, unknown>();
+  private onVoiceChange: VoiceChangeHandler | null = null;
+  private _isMuted = false;
+  private _allUsers: string[] = [];
+  private _myUserId = '';
 
-  // ROOM_ACTIVE 후 호출 — 낮은 인덱스가 높은 인덱스에게 offer
+  setMediaHandler(fn: MediaReceivedHandler) { this.onMedia = fn; }
+  setVoiceChangeHandler(fn: VoiceChangeHandler) { this.onVoiceChange = fn; }
+
+  // 방 활성화 시 호출 — 이미지 피어 + 룸 메타데이터 저장
   initRoom(allUsers: string[], myUserId: string) {
+    this._allUsers = allUsers;
+    this._myUserId = myUserId;
     const myIdx = allUsers.indexOf(myUserId);
     allUsers.slice(myIdx + 1).forEach((peerId) => {
       const peer = new PeerConn(peerId, (pid, b64, mime) => this.onMedia?.(pid, b64, mime));
@@ -176,7 +249,6 @@ class WebRTCManager {
       signal_type: string; sender_id: string; payload: unknown;
     };
     let peer = this.peers.get(sender_id);
-
     if (signal_type === 'offer') {
       if (!peer) {
         peer = new PeerConn(sender_id, (pid, b64, mime) => this.onMedia?.(pid, b64, mime));
@@ -190,13 +262,98 @@ class WebRTCManager {
     }
   }
 
+  // ── 음성 채팅 ─────────────────────────────────────────────────────────────
+
+  get voiceActive() { return !!this.localStream; }
+  get isMuted() { return this._isMuted; }
+
+  async startVoice() {
+    const lib = getRNWebRTC();
+    if (!lib) throw new Error('WebRTC를 사용할 수 없습니다');
+    if (this.localStream) return; // 이미 통화 중
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this.localStream = await lib.mediaDevices.getUserMedia({ audio: true }) as any;
+    this._isMuted = false;
+
+    this._allUsers.forEach((peerId) => {
+      if (peerId === this._myUserId) return;
+      const voicePeer = new VoicePeerConn(peerId);
+      this.voicePeers.set(peerId, voicePeer);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      this.localStream!.getAudioTracks().forEach((track: any) => voicePeer.addLocalTrack(track, this.localStream));
+
+      const pending = this.pendingVoiceOffers.get(peerId);
+      if (pending) {
+        this.pendingVoiceOffers.delete(peerId);
+        voicePeer.handleOffer(pending, this.localStream).catch(console.warn);
+      } else {
+        voicePeer.createOffer().catch(console.warn);
+      }
+    });
+
+    this.onVoiceChange?.(true, false);
+  }
+
+  toggleMute() {
+    if (!this.localStream) return;
+    this._isMuted = !this._isMuted;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this.localStream.getAudioTracks().forEach((track: any) => { track.enabled = !this._isMuted; });
+    this.onVoiceChange?.(true, this._isMuted);
+  }
+
+  stopVoice() {
+    if (this.localStream) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      this.localStream.getTracks().forEach((track: any) => track.stop());
+      this.localStream = null;
+    }
+    this.voicePeers.forEach((p) => p.close());
+    this.voicePeers.clear();
+    this.pendingVoiceOffers.clear();
+    this._isMuted = false;
+    this.onVoiceChange?.(false, false);
+  }
+
+  handleVoiceSignal(signal: Record<string, unknown>) {
+    const { signal_type, sender_id, payload } = signal as {
+      signal_type: string; sender_id: string; payload: unknown;
+    };
+
+    if (signal_type === 'voice_offer') {
+      if (this.localStream) {
+        let peer = this.voicePeers.get(sender_id);
+        if (!peer) {
+          peer = new VoicePeerConn(sender_id);
+          this.voicePeers.set(sender_id, peer);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          this.localStream.getAudioTracks().forEach((track: any) => peer!.addLocalTrack(track, this.localStream));
+        }
+        peer.handleOffer(payload, this.localStream).catch(console.warn);
+      } else {
+        // 아직 통화 미참여 — 초대 offer 보관
+        this.pendingVoiceOffers.set(sender_id, payload);
+      }
+    } else if (signal_type === 'voice_answer') {
+      this.voicePeers.get(sender_id)?.handleAnswer(payload).catch(console.warn);
+    } else if (signal_type === 'voice_candidate') {
+      this.voicePeers.get(sender_id)?.addCandidate(payload).catch(console.warn);
+    }
+  }
+
+  get hasPendingVoiceInvite() { return this.pendingVoiceOffers.size > 0; }
+
   sendImageToAll(id: string, base64: string, mimeType: string) {
     this.peers.forEach((peer) => peer.sendBase64(id, base64, mimeType));
   }
 
   cleanup() {
+    this.stopVoice();
     this.peers.forEach((p) => p.close());
     this.peers.clear();
+    this._allUsers = [];
+    this._myUserId = '';
   }
 }
 

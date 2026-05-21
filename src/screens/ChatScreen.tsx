@@ -53,6 +53,7 @@ export default function ChatScreen() {
     userId, messages, addMessage, connectedUsers, typingUsers,
     queueStatus, timebombEndsAt, matchDeadlineEndsAt,
     resetRoom, roomId, allUsers, wsConnected, errorMsg, setErrorMsg,
+    voiceActive, isMuted,
   } = useStore();
 
   const [input, setInput] = useState('');
@@ -142,6 +143,18 @@ export default function ChatScreen() {
   }, [nav]);
 
   const MAX_MSG_LEN = 1000;
+
+  async function toggleVoice() {
+    try {
+      if (voiceActive) {
+        webrtcManager.stopVoice();
+      } else {
+        await webrtcManager.startVoice();
+      }
+    } catch {
+      Alert.alert('마이크 오류', '마이크 접근 권한이 필요합니다.');
+    }
+  }
 
   function sendMessage() {
     const text = input.trim();
@@ -322,6 +335,23 @@ export default function ChatScreen() {
         <View style={styles.errorBanner}>
           <Text style={styles.errorBannerText}>{errorMsg}</Text>
         </View>
+      )}
+      {voiceActive && (
+        <View style={styles.voiceBar}>
+          <Text style={styles.voiceBarIcon}>🎙️</Text>
+          <Text style={styles.voiceBarText}>{isMuted ? '마이크 꺼짐' : '음성 통화 중'}</Text>
+          <TouchableOpacity style={styles.voiceMuteBtn} onPress={() => webrtcManager.toggleMute()}>
+            <Text style={styles.voiceMuteBtnText}>{isMuted ? '🔇' : '🔊'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.voiceEndBtn} onPress={() => webrtcManager.stopVoice()}>
+            <Text style={styles.voiceEndBtnText}>종료</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+      {!voiceActive && webrtcManager.hasPendingVoiceInvite && (
+        <TouchableOpacity style={styles.voiceInviteBanner} onPress={toggleVoice}>
+          <Text style={styles.voiceInviteText}>🎙️ 음성 통화 초대 — 탭하여 참여</Text>
+        </TouchableOpacity>
       )}
 
       {/* 헤더 */}
@@ -559,6 +589,15 @@ export default function ChatScreen() {
           >
             <Text style={[styles.imageBtnText, !canChat && styles.imageBtnDisabled]}>📷</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.imageBtn, voiceActive && styles.micBtnActive]}
+            onPress={toggleVoice}
+            disabled={!canChat}
+          >
+            <Text style={[styles.imageBtnText, !canChat && styles.imageBtnDisabled]}>
+              {voiceActive ? (isMuted ? '🔇' : '🎙️') : '🎤'}
+            </Text>
+          </TouchableOpacity>
           <TextInput
             style={styles.input}
             value={input}
@@ -669,6 +708,32 @@ const styles = StyleSheet.create({
   imageBtn: { paddingHorizontal: 8, paddingVertical: 10, marginRight: 4 },
   imageBtnText: { fontSize: 22 },
   imageBtnDisabled: { opacity: 0.3 },
+  micBtnActive: { backgroundColor: '#1a1035', borderRadius: 8 },
+
+  voiceBar: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#1a1035', paddingHorizontal: 12, paddingVertical: 8,
+    borderBottomWidth: 1, borderBottomColor: '#4C1D95',
+  },
+  voiceBarIcon: { fontSize: 16, marginRight: 6 },
+  voiceBarText: { flex: 1, color: '#C4B5FD', fontSize: 13, fontWeight: '600' },
+  voiceMuteBtn: {
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: 8, backgroundColor: '#2D1B69', marginRight: 6,
+  },
+  voiceMuteBtnText: { fontSize: 16 },
+  voiceEndBtn: {
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: 8, backgroundColor: '#7F1D1D',
+  },
+  voiceEndBtnText: { color: '#FCA5A5', fontSize: 12, fontWeight: '600' },
+
+  voiceInviteBanner: {
+    backgroundColor: '#1e1144', paddingHorizontal: 16, paddingVertical: 10,
+    borderBottomWidth: 1, borderBottomColor: '#4C1D95',
+    alignItems: 'center',
+  },
+  voiceInviteText: { color: '#A78BFA', fontSize: 13, fontWeight: '600' },
   input: {
     flex: 1, backgroundColor: '#111827',
     borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10,
