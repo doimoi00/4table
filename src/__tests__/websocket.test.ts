@@ -17,10 +17,10 @@ const WS_CLOSED = 3;
 
 // ─── WebSocket Mock ────────────────────────────────────────────────────────────
 class MockWebSocket {
-  static CONNECTING = WS_CONNECTING;
-  static OPEN = WS_OPEN;
-  static CLOSING = WS_CLOSING;
-  static CLOSED = WS_CLOSED;
+  static readonly CONNECTING = WS_CONNECTING;
+  static readonly OPEN = WS_OPEN;
+  static readonly CLOSING = WS_CLOSING;
+  static readonly CLOSED = WS_CLOSED;
 
   readyState: number = WS_CONNECTING;
   onopen: (() => void) | null = null;
@@ -50,8 +50,8 @@ class MockWebSocket {
     this.onclose?.();
   }
 
-  static instances: MockWebSocket[] = [];
-  static reset() { MockWebSocket.instances = []; }
+  static readonly instances: MockWebSocket[] = [];
+  static reset() { MockWebSocket.instances.length = 0; }
 }
 
 // Node.js 전역에 WebSocket 주입

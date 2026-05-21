@@ -199,6 +199,32 @@ export default function App() {
     });
   }, [startTimebomb, addMessage]);
 
+  // ── WS ERROR 코드 처리 ────────────────────────────────────────────────────
+  const handleWsError = useCallback((msg: Record<string, unknown>) => {
+    const code = msg.code as string;
+    switch (code) {
+      case 'RATE_LIMITED':
+        setErrorMsg('전송 속도 초과 — 잠시 후 다시 시도하세요');
+        break;
+      case 'CONTENT_TOO_LONG':
+        setErrorMsg('메시지가 너무 깁니다 (최대 1000자)');
+        break;
+      case 'MESSAGE_NOT_FOUND':
+        setErrorMsg('리액션 실패 — 메시지를 찾을 수 없습니다');
+        break;
+      case 'ROOM_NOT_FOUND':
+        resetRoom();
+        webrtcManager.cleanup();
+        webrtcInitializedRef.current = false;
+        if (navRef.current?.isReady()) {
+          navRef.current.navigate('Match');
+        }
+        break;
+      default:
+        console.warn('[WS ERROR]', code, msg);
+    }
+  }, [setErrorMsg, resetRoom]);
+
   // ── WS 메시지 핸들러 ────────────────────────────────────────────────────
   const handleWsMessage = useCallback((msg: Record<string, unknown>) => {
     const type = msg.type as string;
@@ -347,31 +373,9 @@ export default function App() {
         }
         break;
 
-      case 'ERROR': {
-        const code = msg.code as string;
-        switch (code) {
-          case 'RATE_LIMITED':
-            setErrorMsg('전송 속도 초과 — 잠시 후 다시 시도하세요');
-            break;
-          case 'CONTENT_TOO_LONG':
-            setErrorMsg('메시지가 너무 깁니다 (최대 1000자)');
-            break;
-          case 'MESSAGE_NOT_FOUND':
-            setErrorMsg('리액션 실패 — 메시지를 찾을 수 없습니다');
-            break;
-          case 'ROOM_NOT_FOUND':
-            resetRoom();
-            webrtcManager.cleanup();
-            webrtcInitializedRef.current = false;
-            if (navRef.current?.isReady()) {
-              navRef.current.navigate('Match');
-            }
-            break;
-          default:
-            console.warn('[WS ERROR]', code, msg);
-        }
+      case 'ERROR':
+        handleWsError(msg);
         break;
-      }
     }
   }, [
     setQueueStatus, setQueueSize, setQueueNeeded, setRoomId,
@@ -379,7 +383,7 @@ export default function App() {
     setAllUsers, setConnectedUsers, setTypingUser,
     startTimebomb, cancelTimebomb,
     resetRoom, startMatchDeadline, handleRoomJoined,
-    handleUserConnectionChange, handleTimebombTriggered, setErrorMsg,
+    handleUserConnectionChange, handleTimebombTriggered, handleWsError,
   ]);
 
   useEffect(() => {

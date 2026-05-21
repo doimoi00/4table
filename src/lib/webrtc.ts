@@ -33,6 +33,23 @@ function getRNWebRTC() {
   return RNWebRTC;
 }
 
+// PeerConn / VoicePeerConn 공통 헬퍼 — stale ICE candidate 무시
+async function safeAddIceCandidate(pc: unknown, payload: unknown) {
+  const lib = getRNWebRTC();
+  if (!lib || !pc) return;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (pc as any).addIceCandidate(new lib.RTCIceCandidate(payload));
+  } catch { /* stale candidate */ }
+}
+
+async function safeHandleAnswer(pc: unknown, payload: unknown) {
+  const lib = getRNWebRTC();
+  if (!lib || !pc) return;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (pc as any).setRemoteDescription(new lib.RTCSessionDescription(payload));
+}
+
 // ─── 이미지 데이터 채널 피어 ───────────────────────────────────────────────
 
 class PeerConn {
@@ -116,15 +133,11 @@ class PeerConn {
   }
 
   async handleAnswer(payload: unknown) {
-    const lib = getRNWebRTC();
-    if (!lib || !this.pc) return;
-    await this.pc.setRemoteDescription(new lib.RTCSessionDescription(payload));
+    return safeHandleAnswer(this.pc, payload);
   }
 
   async addCandidate(payload: unknown) {
-    const lib = getRNWebRTC();
-    if (!lib || !this.pc) return;
-    try { await this.pc.addIceCandidate(new lib.RTCIceCandidate(payload)); } catch { /* stale */ }
+    return safeAddIceCandidate(this.pc, payload);
   }
 
   sendBase64(id: string, base64: string, mimeType: string) {
@@ -198,15 +211,11 @@ class VoicePeerConn {
   }
 
   async handleAnswer(payload: unknown) {
-    const lib = getRNWebRTC();
-    if (!lib || !this.pc) return;
-    await this.pc.setRemoteDescription(new lib.RTCSessionDescription(payload));
+    return safeHandleAnswer(this.pc, payload);
   }
 
   async addCandidate(payload: unknown) {
-    const lib = getRNWebRTC();
-    if (!lib || !this.pc) return;
-    try { await this.pc.addIceCandidate(new lib.RTCIceCandidate(payload)); } catch { /* stale */ }
+    return safeAddIceCandidate(this.pc, payload);
   }
 
   close() {
@@ -273,7 +282,7 @@ class WebRTCManager {
   async startVoice() {
     const lib = getRNWebRTC();
     if (!lib) throw new Error('WebRTC를 사용할 수 없습니다');
-    if (this.localStream) return; // 이미 통화 중
+    if (this.localStream) return;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.localStream = await lib.mediaDevices.getUserMedia({ audio: true }) as any;
@@ -337,7 +346,6 @@ class WebRTCManager {
         }
         peer.handleOffer(payload, this.localStream).catch(console.warn);
       } else {
-        // 아직 통화 미참여 — 초대 offer 보관
         this.pendingVoiceOffers.set(sender_id, payload);
         this.onVoiceInvite?.(true);
       }

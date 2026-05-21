@@ -27,8 +27,15 @@ const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '😡'] as co
 const TYPING_STOP_DELAY = 2500;
 const TYPING_THROTTLE_MS = 1000;
 
+function micIcon(voiceActive: boolean, isMuted: boolean): string {
+  if (!voiceActive) return '🎤';
+  return isMuted ? '🔇' : '🎙️';
+}
+
 function genMsgId(): string {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  const t = Date.now().toString(36);
+  const r = (performance.now() * 1000 | 0).toString(36);
+  return `${t}-${r}`;
 }
 
 function UserDot({ userId, users, connectedUsers }: {
@@ -595,7 +602,7 @@ export default function ChatScreen() {
             disabled={!canChat}
           >
             <Text style={[styles.imageBtnText, !canChat && styles.imageBtnDisabled]}>
-              {voiceActive ? (isMuted ? '🔇' : '🎙️') : '🎤'}
+              {micIcon(voiceActive, isMuted)}
             </Text>
           </TouchableOpacity>
           <TextInput
