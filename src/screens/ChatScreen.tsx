@@ -141,9 +141,15 @@ export default function ChatScreen() {
     return unsubscribe;
   }, [nav]);
 
+  const MAX_MSG_LEN = 1000;
+
   function sendMessage() {
     const text = input.trim();
     if (!text || !canChat) return;
+    if (text.length > MAX_MSG_LEN) {
+      setErrorMsg(`메시지가 너무 깁니다 (최대 ${MAX_MSG_LEN}자)`);
+      return;
+    }
     if (typingTimer.current) clearTimeout(typingTimer.current);
     wsClient.send({ type: 'TYPING', is_typing: false });
 

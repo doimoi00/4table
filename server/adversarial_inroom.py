@@ -357,7 +357,9 @@ async def rls_tests():
     import urllib.parse
 
     def rest(method, path, body=None, token=None):
-        url = SUPABASE_URL + "/rest/v1/" + path
+        # path의 쿼리스트링에 제어문자가 포함될 수 있으므로 안전하게 인코딩
+        safe_path = urllib.parse.quote(path, safe="=&?/")
+        url = SUPABASE_URL + "/rest/v1/" + safe_path
         data = json.dumps(body).encode() if body else None
         req = urllib.request.Request(url, data=data, method=method)
         req.add_header("apikey", SUPABASE_ANON)
