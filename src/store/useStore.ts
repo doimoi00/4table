@@ -44,6 +44,7 @@ type State = {
   errorMsg: string | null;
   voiceActive: boolean;
   isMuted: boolean;
+  pendingVoiceInvite: boolean;
 };
 
 type Actions = {
@@ -68,6 +69,7 @@ type Actions = {
   setErrorMsg: (msg: string | null) => void;
   setVoiceActive: (active: boolean) => void;
   setMuted: (muted: boolean) => void;
+  setPendingVoiceInvite: (v: boolean) => void;
   resetRoom: () => void;
 };
 
@@ -92,6 +94,7 @@ export const useStore = create<State & Actions>((set) => ({
   errorMsg: null,
   voiceActive: false,
   isMuted: false,
+  pendingVoiceInvite: false,
 
   setUserId: (id) => set({ userId: id }),
   setDeviceToken: (token) => set({ deviceToken: token }),
@@ -123,6 +126,7 @@ export const useStore = create<State & Actions>((set) => ({
   setErrorMsg: (msg) => set({ errorMsg: msg }),
   setVoiceActive: (active) => set({ voiceActive: active }),
   setMuted: (muted) => set({ isMuted: muted }),
+  setPendingVoiceInvite: (v) => set({ pendingVoiceInvite: v }),
   resetRoom: () =>
     set({
       queueStatus: 'idle',
@@ -134,5 +138,8 @@ export const useStore = create<State & Actions>((set) => ({
       timebombSeconds: null,
       timebombEndsAt: null,
       matchDeadlineEndsAt: null,
+      voiceActive: false,
+      isMuted: false,
+      pendingVoiceInvite: false,
     }),
 }));

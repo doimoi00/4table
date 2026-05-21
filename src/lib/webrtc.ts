@@ -16,6 +16,7 @@ const CHUNK_SIZE = 14_000;
 
 type MediaReceivedHandler = (peerId: string, base64: string, mimeType: string) => void;
 export type VoiceChangeHandler = (active: boolean, muted: boolean) => void;
+export type VoiceInviteHandler = (hasPending: boolean) => void;
 
 // react-native-webrtc 런타임 import
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -225,12 +226,14 @@ class WebRTCManager {
   private localStream: any = null;
   private pendingVoiceOffers = new Map<string, unknown>();
   private onVoiceChange: VoiceChangeHandler | null = null;
+  private onVoiceInvite: VoiceInviteHandler | null = null;
   private _isMuted = false;
   private _allUsers: string[] = [];
   private _myUserId = '';
 
   setMediaHandler(fn: MediaReceivedHandler) { this.onMedia = fn; }
   setVoiceChangeHandler(fn: VoiceChangeHandler) { this.onVoiceChange = fn; }
+  setVoiceInviteHandler(fn: VoiceInviteHandler) { this.onVoiceInvite = fn; }
 
   // 방 활성화 시 호출 — 이미지 피어 + 룸 메타데이터 저장
   initRoom(allUsers: string[], myUserId: string) {
@@ -293,6 +296,7 @@ class WebRTCManager {
     });
 
     this.onVoiceChange?.(true, false);
+    this.onVoiceInvite?.(false);
   }
 
   toggleMute() {
@@ -314,6 +318,7 @@ class WebRTCManager {
     this.pendingVoiceOffers.clear();
     this._isMuted = false;
     this.onVoiceChange?.(false, false);
+    this.onVoiceInvite?.(false);
   }
 
   handleVoiceSignal(signal: Record<string, unknown>) {
@@ -334,6 +339,7 @@ class WebRTCManager {
       } else {
         // 아직 통화 미참여 — 초대 offer 보관
         this.pendingVoiceOffers.set(sender_id, payload);
+        this.onVoiceInvite?.(true);
       }
     } else if (signal_type === 'voice_answer') {
       this.voicePeers.get(sender_id)?.handleAnswer(payload).catch(console.warn);
@@ -341,8 +347,6 @@ class WebRTCManager {
       this.voicePeers.get(sender_id)?.addCandidate(payload).catch(console.warn);
     }
   }
-
-  get hasPendingVoiceInvite() { return this.pendingVoiceOffers.size > 0; }
 
   sendImageToAll(id: string, base64: string, mimeType: string) {
     this.peers.forEach((peer) => peer.sendBase64(id, base64, mimeType));

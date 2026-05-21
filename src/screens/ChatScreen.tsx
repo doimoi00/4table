@@ -53,7 +53,7 @@ export default function ChatScreen() {
     userId, messages, addMessage, connectedUsers, typingUsers,
     queueStatus, timebombEndsAt, matchDeadlineEndsAt,
     resetRoom, roomId, allUsers, wsConnected, errorMsg, setErrorMsg,
-    voiceActive, isMuted,
+    voiceActive, isMuted, pendingVoiceInvite,
   } = useStore();
 
   const [input, setInput] = useState('');
@@ -348,7 +348,7 @@ export default function ChatScreen() {
           </TouchableOpacity>
         </View>
       )}
-      {!voiceActive && webrtcManager.hasPendingVoiceInvite && (
+      {!voiceActive && pendingVoiceInvite && (
         <TouchableOpacity style={styles.voiceInviteBanner} onPress={toggleVoice}>
           <Text style={styles.voiceInviteText}>🎙️ 음성 통화 초대 — 탭하여 참여</Text>
         </TouchableOpacity>

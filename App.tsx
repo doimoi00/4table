@@ -44,7 +44,7 @@ export default function App() {
     setAllUsers, setConnectedUsers, setTypingUser,
     startTimebomb, cancelTimebomb,
     resetRoom, startMatchDeadline, setWsConnected, setErrorMsg,
-    setVoiceActive, setMuted,
+    setVoiceActive, setMuted, setPendingVoiceInvite,
   } = useStore();
 
   // ── 초기화 ──────────────────────────────────────────────────────────────
@@ -109,7 +109,10 @@ export default function App() {
       setVoiceActive(active);
       setMuted(muted);
     });
-  }, [setVoiceActive, setMuted]);
+    webrtcManager.setVoiceInviteHandler((hasPending) => {
+      setPendingVoiceInvite(hasPending);
+    });
+  }, [setVoiceActive, setMuted, setPendingVoiceInvite]);
 
   // ── ROOM_JOINED 핸들러 ───────────────────────────────────────────────────
   const handleRoomJoined = useCallback((msg: Record<string, unknown>) => {
