@@ -63,7 +63,7 @@ app.add_middleware(
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "version": "a2d97a1"}
 
 
 @app.get("/stats")
