@@ -1,5 +1,5 @@
 // 서버 주소 - 배포 시 실제 서버 IP/도메인으로 변경
-export const SERVER_HOST = '4table-server-production.up.railway.app';
+export const SERVER_HOST = '4table-production.up.railway.app';
 export const WS_URL = `wss://${SERVER_HOST}/ws`;
 export const API_URL = `https://${SERVER_HOST}`;
 
